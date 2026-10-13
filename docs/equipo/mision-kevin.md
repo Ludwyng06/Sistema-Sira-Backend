@@ -1,28 +1,25 @@
-# SIRA · Misión del agente de Kevin Guerrero
+# SIRA · Misión del agente de Kevin Guerrero · FRONTEND
 
 > Pega este archivo completo como contexto inicial de tu agente de programación, junto con `PROMPT-MAESTRO.md`.
-> Cubre los 20 días (13 oct. – 1 nov. 2026). Precisa el reparto de `docs/architecture/08-plan-de-trabajo-20-dias.md`; donde este documento sea más específico que `08`, manda este.
-> Documento hermano: `docs/equipo/mision-isabel.md`. Los dos están escritos para que Kevin e Isabel **nunca editen el mismo archivo**.
+> Cubre los 20 días (13 oct. – 1 nov. 2026). **Reemplaza el reparto por módulos de `docs/architecture/08-plan-de-trabajo-20-dias.md`**: ahora el reparto es por repositorio.
+> Documento hermano: `docs/equipo/mision-isabel.md` (backend).
 
 ## 1. Tu papel
 
-Eres el dueño de la **lógica de reservas**: qué está ocupado, cómo se pide un espacio y qué pasa con la solicitud en el tiempo.
+Eres el dueño de **todo el frontend** (`Sistema-Sira-Frontend`). Isabel es la dueña de **todo el backend** (`Sistema-Sira-Backend`). Jensen es el líder técnico: revisa los pull request, mantiene la documentación y decide lo que este documento no resuelva.
 
-| Semana | Resultado |
-|---|---|
-| 1 (13–18 oct.) | Disponibilidad: franjas, bloqueos con recurrencia, `GET /disponibilidad`, componente de calendario y búsqueda inversa. |
-| 2 (19–25 oct.) | Solicitudes en el backend: borrador, ítems, máquina de estados, envío con retención (UC-01), exención, documentos y cancelación. |
-| 3 (26 oct.–1 nov.) | Vencimientos y recordatorios (jobs), correos y centro de notificaciones, pruebas de punta a punta. |
+**Así no chocan:** tú solo escribes en el repo Frontend e Isabel solo en el repo Backend. Lo único que cruza entre los dos es **el contrato de la API**, que Isabel publica en Swagger (sección 4).
 
 ## 2. Antes de empezar
 
-1. Lee `PROMPT-MAESTRO.md`, `docs/architecture/01` a `04` (sobre todo `02` §3.4 y §4, y `03` §3 y §4) y el módulo `src/modules/inventario` del backend: es el ejemplo de cómo se escribe todo.
-2. Requisitos: Node.js 22.22.3 o superior, Docker Desktop, Git, puerto 5432 libre.
-3. Arranque (una vez por repo):
+1. Lee `PROMPT-MAESTRO.md`, `docs/architecture/04-frontend.md` completo y `03-backend.md` §5 y §6 (endpoints y errores).
+2. **Next.js 16 no es el que conoces.** Antes de usar una API nueva, lee `node_modules/next/dist/docs/` (lo exige `AGENTS.md`). El proyecto tiene `cacheComponents: true`: el dato dinámico va en un componente hijo dentro de `<Suspense>`. Copia el patrón de `src/app/(publico)/page.tsx`.
+3. Requisitos: Node.js 22.22.3 o superior, Docker Desktop, Git, puerto 5432 libre.
+4. Arranque. Necesitas los dos repos clonados lado a lado; el backend **solo lo levantas, nunca lo editas**:
 
    ```bash
-   # Backend
-   npm install && cp .env.example .env
+   # Backend (cada mañana, en develop)
+   git pull && npm install
    npm run db:up && npm run db:migrate && npm run db:seed
    npm run dev                      # http://localhost:3001/docs
 
@@ -30,156 +27,112 @@ Eres el dueño de la **lógica de reservas**: qué está ocupado, cómo se pide 
    npm install && cp .env.example .env.local
    npm run start                    # http://localhost:3000
    ```
-4. Tu rama en **los dos repos** es `feature/kevin`. Nunca trabajas en `main`, `develop` ni en la rama de otra persona.
+5. Tu rama es `feature/kevin` **en el repo Frontend**. Nunca trabajas en `main` ni en `develop`.
 
-## 3. Tu territorio (solo tú editas estos archivos)
+## 3. Tu territorio
 
-### Backend (`Sistema-Sira-Backend`)
-
-| Ruta | Qué va ahí |
+| Editas | No tocas |
 |---|---|
-| `src/modules/disponibilidad/**` | Franjas, bloqueos, calendario, búsqueda inversa. Es el **único** módulo que lee y escribe `franja_ocupada` y `bloqueo_calendario`. |
-| `src/modules/reservas/**` | Solicitudes, ítems, documentos, máquina de estados (`dominio/maquina-estados.ts` ya existe y no se reescribe). Excepción: `src/modules/reservas/cotizacion/**` es de Jensen. |
-| `src/modules/notificaciones/**` | Plantillas de correo, notificaciones en la app, jobs de vencimientos y recordatorios. |
+| Todo `src/**` del repo Frontend: `app/`, `components/`, `lib/`. | El repo `Sistema-Sira-Backend`, ni un archivo. Si te falta un campo o un endpoint, se lo pides a Isabel (sección 4). |
+| `public/**`, `next.config.ts`, `eslint.config.mjs`. | `docs/**` y `PROMPT-MAESTRO.md`: los mantiene Jensen y se copian desde el Backend. |
+| `.env.example` (toda variable nueva). | `cacheComponents` en `next.config.ts`: no se desactiva. |
+| `package.json` (dependencia nueva: di para qué y qué alternativa descartaste, en un PR aparte). | |
 
-### Frontend (`Sistema-Sira-Frontend`)
+Lo que ya existe y es tuyo desde hoy: las páginas públicas (`/`, `/sedes/[sede]/bloques/[bloque]`, `/espacios/[codigo]`), los componentes base, `src/lib/api.ts`, `formato.ts`, `inventario.ts` y `tipos.ts`.
 
-| Ruta | Qué va ahí |
-|---|---|
-| `src/components/CalendarioEspacio.tsx` y `src/components/calendario/**` | Calendario con estados, patrones y etiquetas. |
-| `src/components/CentroNotificaciones.tsx` | Centro de notificaciones (lo monta Jensen en el layout del panel). |
-| `src/app/(publico)/buscar/**` | Búsqueda inversa. |
-| `src/app/(panel)/panel/calendario/**` | Bloqueos manuales y recurrentes. |
-| `src/lib/disponibilidad.ts`, `src/lib/solicitudes.ts`, `src/lib/notificaciones.ts`, `src/lib/tipos-disponibilidad.ts`, `src/lib/tipos-solicitudes.ts`, `src/lib/tipos-notificaciones.ts` | Llamadas y tipos de tus módulos. **El dueño del módulo de backend es dueño de sus tipos en el frontend.** |
+## 4. El contrato con Isabel: contrato primero
 
-## 4. Lo que NO tocas
+Tú construyes **un paso detrás de Isabel**. Ella publica el contrato de cada módulo antes de implementarlo, así que tú puedes escribir la pantalla aunque el endpoint todavía responda `501`.
 
-| Archivo o carpeta | Dueño | Si necesitas un cambio |
-|---|---|---|
-| `src/modules/inventario/**`, `src/modules/servicios/**`, `src/modules/actas/**`, `src/modules/reportes/**`, `src/shared/almacenamiento/**` (backend) | Isabel | Pídeselo; ella lo hace en su rama. |
-| `src/app/(publico)/page.tsx`, `(publico)/sedes/**`, `(publico)/espacios/**`, `(publico)/servicios/**`, `(cuenta)/solicitar/**`, `(cuenta)/mis-solicitudes/**`, `panel/page.tsx`, `panel/inventario/**`, `panel/servicios/**`, `panel/actas/**`, `globals.css`, y los componentes `TarjetaEspacio`, `TarjetaBloque`, `IndicadorAforo`, `EstadoVacio`, `EstadoError`, `Foto`, `Esqueleto`, `CargadorArchivos`, `InsigniaEstado`, `LineaTiempoSolicitud`, `ResumenCotizacion`, `DialogoConfirmacion`, encabezado y pie (frontend) | Isabel | Igual. Tú solo los **importas**. |
-| `src/modules/identidad`, `tarifario`, `aprobaciones`, `pagos`, `auditoria`, `reservas/cotizacion`; `src/shared/**`; `src/main.ts` | Jensen | Pídeselo. |
-| `src/app/(auth)/**`, `src/app/(panel)/layout.tsx`, `panel/aprobaciones`, `panel/pagos`, `panel/tarifario`, `panel/auditoria`, `panel/configuracion`, `(publico)/simulador`, `src/lib/api.ts`, `src/lib/formato.ts` | Jensen | Pídeselo. |
-| `prisma/schema.prisma`, `prisma/sql/restricciones.sql`, `prisma/migrations/**` | Jensen aprueba | Para y explica por qué antes de tocar nada. Solo una persona a la vez cambia el esquema. |
-| `docs/**`, `PROMPT-MAESTRO.md` | Jensen | Se cambian primero en Backend y se copian a Frontend. |
+1. **Swagger es la única fuente del contrato:** `http://localhost:3001/docs` (JSON en `/docs-json`). No inventes campos ni rutas.
+2. **Tus tipos salen de Swagger.** Un archivo por módulo: `src/lib/tipos-<modulo>.ts` (por ejemplo `tipos-solicitudes.ts`) y sus llamadas en `src/lib/<modulo>.ts`. Todo fetch pasa por `src/lib/api.ts`.
+3. **Si el endpoint aún responde `501`:** la pantalla se construye completa contra los tipos, y muestra su estado de error mientras tanto. Nunca dejes un mock ni datos quemados en el repo.
+4. **Si te falta algo** (un campo, un filtro, un endpoint): abre un issue en el repo Backend con la etiqueta `contrato`, diciendo qué pantalla lo necesita y qué forma esperas. No lo resuelvas calculándolo en el cliente.
+5. **Si Isabel cambia un contrato publicado**, avisa en el grupo y su PR dice "CAMBIO DE CONTRATO". Ajustas tus tipos ese mismo día.
 
-**Sobre "Mis solicitudes":** la tabla de `08` §1 te la asigna en la semana 3 y el día a día se la da a Isabel. Queda así: **tú haces el backend** (`GET /solicitudes`, `GET /solicitudes/:id` con historial) e **Isabel hace las pantallas**.
+Reglas de forma de toda la API:
 
-### Archivos compartidos: cómo se tocan sin chocar
+- Paginación `?pagina&porPagina` → `{ datos, total, pagina, porPagina }`.
+- Errores `{ codigo, mensaje, detalles?, correlacionId }`: muestras `mensaje` tal cual llega (ya viene escrito para el usuario).
+- Fechas ISO 8601 en UTC: las formateas con `src/lib/formato.ts`, siempre en `America/Bogota`. Dinero en pesos enteros: `pesos()`.
+- `404` en un recurso ajeno o inexistente → página de no encontrado.
+- Sesión: el access token vive en memoria (`fijarToken`); el refresh llega en cookie `httpOnly`; `api.ts` ya reintenta tras un `401`.
 
-| Archivo | Regla |
-|---|---|
-| `src/app.module.ts` | Solo agregas la línea `import` de tu módulo y su entrada en `imports`, en orden alfabético. Nada más en ese PR. |
-| `prisma/seed.ts` | Un cambio a la vez. Avisa en el grupo, hazlo en un PR que solo toque el seed y fusiónalo el mismo día. Los espacios reales los cargas tú el domingo 18, con los datos de inventario acordados con Isabel. |
-| `package.json` / `package-lock.json` | Dependencia nueva (`rrule`, por ejemplo): avisa para qué y qué alternativa descartaste, en un PR aparte y pequeño. |
-| `.env.example` + `src/shared/config/configuracion.ts` | Variable nueva: la pides a Jensen (él edita `shared/config`). |
+## 5. Tareas en orden
 
-## 5. Contratos con Isabel
+Cada fila es un PR pequeño hacia `develop`. ⏬ = recortable si el tiempo no alcanza.
 
-Un contrato es lo único que cruza entre los dos territorios. Se publica **primero como tipos o firma** (aunque la implementación sea un marcador), para que el otro no espere.
-
-### Lo que tú le entregas a Isabel
-
-| # | Qué | Para cuándo |
-|---|---|---|
-| K1 | Componente `CalendarioEspacio` con props `{ codigoEspacio, modo: 'lectura' \| 'seleccion', fechaInicial?, onSeleccion?(franja: { inicio, fin }) }`. | Jue 15 (marcador con las props) · Vie 16 (funcional) |
-| K2 | `src/lib/tipos-solicitudes.ts` y `src/lib/solicitudes.ts`: tipos y llamadas de `POST /solicitudes`, `PATCH /solicitudes/:id`, ítems de reserva y servicio, documentos, `enviar`, `GET /solicitudes` y `GET /solicitudes/:id` (con historial de estados). | Lun 19 en la mañana (tipos) · según tu día a día (endpoints) |
-| K3 | `SolicitudesService.transicionar(tx, solicitudId, evento, usuarioId, observacion?)`, exportado por `ReservasModule`: valida con `validarTransicion`, escribe historial y bitácora y actualiza las franjas en la misma transacción. Lo usan las actas de Isabel y las decisiones y pagos de Jensen. | Mar 20 (firma, con la máquina de estados) · antes del Lun 26 (probado) |
-| K4 | Error `409 FRANJA_NO_DISPONIBLE` con `detalles.conflictos` y `detalles.sugerencias`. | Mié 21 |
-
-### Lo que Isabel te entrega a ti
-
-| # | Qué | Para cuándo |
-|---|---|---|
-| I1 | `InventarioConsultaService`, exportado por `InventarioModule`: `obtenerEspacioParaReserva(codigo)` (capacidad, montaje y desmontaje, estado, tipo con anticipación y aforo de póliza, horarios, responsable, dependencia, depósito) y `listarReservablesPorCapacidad({ sede?, asistentes })`. | Mié 14 (firma) · Jue 15 (implementado) |
-| I2 | `AlmacenamientoPort` en `src/shared/almacenamiento/`: `subir({ clave, contenido, tipoMime }) → { url }` y `eliminar(clave)`, con el token `ALMACENAMIENTO`. Lo usas para los documentos adjuntos. | Dom 18 |
-| I3 | `ServiciosConsultaService.obtenerParaItem(id)`, exportado por `ServiciosModule`, para validar los ítems de servicio. | Lun 19 |
-| I4 | Componentes `TarjetaEspacio`, `IndicadorAforo`, `EstadoVacio`, `EstadoError`, `CargadorArchivos` para tus pantallas. | Ya existen · `CargadorArchivos` Dom 18 |
-
-### Lo que necesitas de Jensen
-
-| Qué | Para cuándo |
-|---|---|
-| `@UsuarioActual()` con sesión real y `RolesGuard` con alcance por dependencia. | Vie 16 |
-| `TarifarioService.calcular()` para el valor estimado al enviar. | Lun 19 |
-| `CorreoPort` (adaptador SMTP a Mailpit) para tus plantillas. | Jue 15 (lo crea para la verificación de correo) |
-| `@Auditar` (interceptor de bitácora). | Dom 18 |
-
-**Si un contrato no llegó el día previsto:** no entres al territorio del otro. Trabaja contra la firma publicada con un doble de prueba y avisa en el daily.
-
-## 6. Tareas en orden
-
-Cada tarea es un PR pequeño hacia `develop`. Marca cada una cuando cumpla el "Terminado" de la sección 8.
-
-### Semana 1 · Disponibilidad
+### Semana 1 · Portal, acceso y panel (13–18 oct.)
 
 | Día | Tarea | Se acepta cuando |
 |---|---|---|
-| Mié 14 | `DisponibilidadService.consultar(espacioId, desde, hasta)` sobre `franja_ocupada` y `GET /disponibilidad` público. | Filtra con `espacio_id = $1 AND periodo && tstzrange($2, $3)`; el público solo ve "Ocupado" o `etiquetaPublica`, nunca datos personales. |
-| Jue 15 | `POST /bloqueos` con RRULE (librería `rrule`) que expande a franjas `BLOQUEO`. Publica el marcador de K1. | Un bloqueo que choca responde `409 FRANJA_NO_DISPONIBLE`; anular libera sus franjas (`LIBERADA`), no las borra. |
-| Vie 16 | `CalendarioEspacio` funcional: mes, semana y día, estados con color, patrón y etiqueta. | El estado nunca se comunica solo con color; en celular pasa a lista por día; se usa con teclado. |
-| Sáb 17 | `GET /disponibilidad/buscar` (fecha, hora, asistentes, sede) y página `/buscar`. | Usa I1 para la capacidad, oculta los que no caben y ordena con `ordenarPorAjuste`. |
-| Dom 18 | Cargar en el seed los espacios reales si ya llegaron los planos. | Sigue siendo idempotente; los datos de ejemplo conservan la marca "(dato de ejemplo)". |
+| Mar 13 | Levantar los dos proyectos. Leer la guía de Next 16 y recorrer el código existente. | Ves Mocoa con los bloques A, B y C. |
+| Mié 14 | Portal público (el backend ya existe): filtro por capacidad mínima en el bloque, galería y condiciones en la ficha, páginas `/servicios` y `/ayuda` de lugar. | Con `?asistentes=` se atenúan los que no caben y se advierte donde sobra espacio. |
+| Jue 15 | Pantallas `registro` (por tipo de solicitante, con aceptación de la política de datos) y `verificar-correo`. | Si el envío falla no se borra lo escrito; el mensaje de error es el de la API. |
+| Vie 16 | `ingresar`, `recuperar`, `restablecer`. Sesión: token en memoria, refresco, `GET /auth/yo`, protección en el servidor de `(cuenta)` y `(panel)`. | Sin sesión, las rutas protegidas llevan a `/ingresar`; sin rol, "No tienes acceso a esta sección". |
+| Sáb 17 | Layout del panel con menú según los roles. Administración de inventario: árbol sede → bloque → espacio a la izquierda, formulario a la derecha. | Archivar pide confirmación (`DialogoConfirmacion`); nada dice "eliminar". |
+| Dom 18 | Componente `CalendarioEspacio` (FullCalendar: mes, semana, día) con estados por color, patrón y etiqueta. Calendario en la ficha del espacio. Página `/buscar` (búsqueda inversa). | El estado nunca se comunica solo con color; en celular pasa a lista por día; se usa con teclado. |
 
-**Hito:** el calendario de un espacio muestra una clase bloqueada, y la búsqueda "40 personas, viernes de 2 a 6" sugiere un aula y no el auditorio.
+**Hito:** un visitante navega Mocoa → Bloque B → un espacio y ve aforo, dotación y el calendario con una clase bloqueada. Un usuario se registra, verifica su correo y entra.
 
-### Semana 2 · Solicitudes
-
-| Día | Tarea | Se acepta cuando |
-|---|---|---|
-| Lun 19 | Publica K2 (tipos) a primera hora. `POST /solicitudes` (borrador), `PATCH`, ítems de reserva y de servicio. | Solo el dueño ve y edita su borrador; un id ajeno responde `404`. Nada se retiene en borrador. |
-| Mar 20 | Servicio de la máquina de estados sobre `validarTransicion` + firma de K3. | Prueba de la tabla de transiciones completa; ningún código cambia `solicitud.estado` por fuera. |
-| Mié 21 | **UC-01** `POST /solicitudes/:id/enviar`: validaciones (RN-04, RN-18, RN-19, RN-20), transacción con consecutivo `SOL-`, franjas `RETENIDA` con montaje y desmontaje, `venceEn` desde `Parametro`, manejo de `23P01` (K4). | Dos envíos sobre la misma franja: el segundo recibe `409` con conflictos y sugerencias. |
-| Jue 22 | Evaluación de RN-07 (exención) en el envío. Prueba de carrera de RNF-05 contra PostgreSQL real. | El cliente nunca envía `esExenta`; de dos transacciones simultáneas, exactamente una confirma. |
-| Vie 23 | Carga de documentos adjuntos con I2, validando tipo por contenido y tamaño. | La póliza es obligatoria si el aforo supera `aforoExigePoliza`. |
-| Sáb 24 | Cancelación por el solicitante (libera franjas; el reembolso queda para la etapa 2). | Pasa por K3 y exige motivo. |
-| Dom 25 | Corrección de bugs de la demo del jueves. | |
-
-**Hito:** el recorrido del docente (exento) funciona completo y una empresa puede enviar su solicitud.
-
-### Semana 3 · Jobs, correos y pruebas
+### Semana 2 · Solicitud y aprobación (19–25 oct.)
 
 | Día | Tarea | Se acepta cuando |
 |---|---|---|
-| Lun 26 | Job de vencimientos (revisión y pago) que libera franjas. K3 probado y estable para las actas. | Los plazos se leen de `Parametro`, nunca de constantes; una orden en verificación no vence. |
-| Mar 27 | Job de recordatorios: aprobador a las 24 h y 48 h, evento 48 h y 24 h antes. | Ningún recordatorio se envía dos veces. |
-| Mié 28 | Plantillas de correo para cada cambio de estado + `CentroNotificaciones` y `GET /notificaciones`. | Los correos se ven en Mailpit (`http://localhost:8025`). |
-| Vie 30 | Pruebas de punta a punta de UC-01 a UC-03. | Corren contra PostgreSQL real. |
-| Sáb 31 | Corrección de bugs. | |
+| Lun 19 | Bloqueos del panel (`panel/calendario`: manuales y recurrentes). ⏬ Carga de fotos (`CargadorArchivos`, texto alternativo obligatorio). | Un bloqueo que choca muestra el mensaje del `409`. |
+| Mar 20 | Asistente paso 1: selección de franjas en el calendario (clic o arrastre), validación inmediata de anticipación y aforo con sugerencias. Paso 2: servicios filtrados por tipo de espacio. | El aforo mayor a la capacidad bloquea y sugiere; nada se retiene todavía. |
+| Mié 21 | Pasos 3 y 4: datos del evento, identificación (uso institucional o particular, dependencia, documentos). Guardado automático del borrador. | Recargar no pierde nada. El cliente **nunca** envía `esExenta`. |
+| Jue 22 | Paso 5: resumen con desglose (`ResumenCotizacion`) o "$0 · valor de referencia", y "Enviar solicitud" con manejo del `409 FRANJA_NO_DISPONIBLE` (conflictos y sugerencias). | Tras enviar: "Solicitud enviada". En una exenta no aparece ninguna sección de pago. |
+| Vie 23 | Bandeja de aprobación: lista priorizada y detalle con calendario, adjuntos y las acciones Aprobar, Devolver, Rechazar y Reclasificar. | Devolver, rechazar y reclasificar exigen motivo antes de habilitar el botón. |
+| Sáb 24 | "Mis solicitudes": lista con `InsigniaEstado` y próxima acción; detalle con `LineaTiempoSolicitud`. | Vacío: "Todavía no has hecho ninguna solicitud. Busca un espacio." Un id ajeno muestra 404. |
+| Dom 25 | Corrección de bugs. | |
+
+**Hito (sábado 24):** el recorrido del docente (exento) se hace completo en pantalla: pide el auditorio, el responsable da el aval, el jefe aprueba y queda confirmada sin pago.
+
+### Semana 3 · Pago, actas y tablero (26 oct.–1 nov.)
+
+| Día | Tarea | Se acepta cuando |
+|---|---|---|
+| Lun 26 | Cotización en el detalle de la solicitud. Simulador de tarifa (`/simulador`) con el aviso "El valor definitivo se confirma en la cotización". | Pesos como `$1.250.000`. |
+| Mar 27 | Paso 6 del asistente: pago por consignación (cuenta, referencia, carga del soporte). Pantalla de tesorería: Por verificar, Aprobados, Rechazados, Vencidos; soporte junto a los datos de la orden. | En una solicitud exenta el paso 6 **no existe**. |
+| Mié 28 | Actas de entrega y devolución pensadas para celular: checklist de elementos, novedades con valor. ⏬ Fotos con la cámara. | Se completa entera a 360 px. |
+| Jue 29 | Tablero de indicadores y `CentroNotificaciones`. | Los números vienen de la API; nada se calcula en el cliente. |
+| Vie 30 | Bitácora filtrable y configuración (usuarios y roles). Pasada de accesibilidad (teclado, contraste, `alt`, foco) y de 360 px en todas las pantallas. | Lighthouse y axe sin errores. |
+| Sáb 31 | Pulido visual, estados vacíos y de error. | |
 | Dom 1 | Congelamiento y ensayo de la demo. Nada nuevo después del mediodía. | |
 
-Si el tiempo no alcanza, lo primero que se recorta son los recordatorios automáticos (`08` §5). **Nunca** se recorta la restricción de no solapamiento ni la máquina de estados.
+**Orden de recorte** (`08` §5): recordatorios → PDF de cotización (se muestra en pantalla) → tablero completo (queda el conteo por estado) → fotos en el acta.
 
-## 7. Flujo de trabajo diario
+## 6. Flujo de trabajo diario
 
 ```bash
 git switch feature/kevin
-git fetch origin && git merge origin/develop     # cada mañana, antes de escribir código
-# ... trabajas una tarea ...
-git add -A && git commit -m "feat: búsqueda inversa por aforo"
+git fetch origin && git merge origin/develop     # cada mañana
+# ... una tarea ...
+git add -A && git commit -m "feat: pantalla de registro"
 git push
 ```
 
-1. Abre un pull request de `feature/kevin` hacia `develop` al terminar cada tarea (máximo dos días de vida).
-2. Lo aprueba otra persona. Jensen revisa todo lo que toque `shared/`, `app.module.ts` o el esquema.
+1. Pull request de `feature/kevin` hacia `develop` al terminar cada tarea (máximo dos días de vida).
+2. Lo aprueba Jensen (o Isabel).
 3. Después de fusionar, vuelve a traer `develop` a tu rama.
-4. Commits en español con Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`).
-5. Si una tarea toca los dos repos, son dos PR con el mismo título.
+4. Commits en español con Conventional Commits (`feat:`, `fix:`, `refactor:`).
 
-## 8. Terminado
+## 7. Terminado
 
-- `npm run build`, `npm run test` y `npm run lint` pasan en el repo que tocaste.
-- Endpoint con DTO validado y visible en Swagger, con sus respuestas de error.
-- Regla de negocio nueva con su prueba unitaria; las de concurrencia, contra PostgreSQL real.
-- Pantalla con sus cinco estados (cargando, vacío, datos, error, sin permiso), funciona en 360 px y se usa con teclado.
-- Ningún archivo fuera de tu territorio aparece en el PR, salvo los "compartidos" con su regla.
+- `npm run build` y `npm run lint` pasan.
+- La pantalla tiene sus cinco estados: cargando (esqueleto con la forma del contenido), vacío (mensaje + acción), con datos, error (mensaje de la API + reintentar) y sin permiso.
+- Funciona desde 360 px sin scroll horizontal y se usa completa con teclado.
+- Toda imagen tiene `alt`, todo campo tiene etiqueta, contraste de al menos 4,5:1.
+- El PR no trae ningún archivo de `docs/` ni del repo Backend, y ningún mock.
 
-## 9. Reglas que tu agente no rompe
+## 8. Reglas que tu agente no rompe
 
-- La disponibilidad **nunca** se valida solo en código: la garantiza `sin_solapamiento` y tú traduces el error `23P01`.
-- Toda transición pasa por la máquina de estados, escribe historial y bitácora y actualiza las franjas en la **misma transacción**.
-- Consecutivos desde `ConsecutivoService`, nunca de `count()`. Plazos desde `Parametro`.
-- Nada de autenticación, tarifas, aprobaciones, pagos, inventario ni actas: no son tuyos. Usas sus servicios exportados.
-- Ningún dato personal en endpoints públicos. Dinero en pesos enteros. Fechas en UTC; `America/Bogota` solo al mostrar.
-- Migraciones: `npm run db:nueva-migracion -- --name <descripcion>`, borrando a mano la sentencia `ALTER COLUMN periodo DROP DEFAULT`, y solo con el visto bueno de Jensen.
-- Si dos documentos se contradicen o necesitas salir de tu territorio: **para y pregunta a Jensen**.
+- Server Components para lo público; Client Components solo para lo interactivo (calendario, asistente, formularios).
+- Todo fetch por `src/lib/api.ts`. Colores solo por tokens de `globals.css`; naranja y verde nunca como color de texto sobre blanco.
+- La validación que cuenta es la del servidor: nunca decides disponibilidad, exención ni precio en el cliente.
+- Los botones dicen lo que hacen ("Enviar solicitud" → "Solicitud enviada"), nunca "Operación exitosa".
+- Fechas `dd/mm/aaaa`, hora de 12 h con "a. m." / "p. m.", siempre en `America/Bogota`.
+- Nada de pasarela de pago, Google/Microsoft, segundo factor ni mapa de calor: están fuera del avance.
+- FullCalendar se queda en la versión 6 (`6.1.21`); la línea de tiempo por recursos es de pago y no se usa.
+- Si dos documentos se contradicen o algo no está aquí: **para y pregunta a Jensen**.
