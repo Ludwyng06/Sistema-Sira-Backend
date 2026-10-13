@@ -1,0 +1,49 @@
+name: sira
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sira
+      POSTGRES_PASSWORD: sira
+      POSTGRES_DB: sira
+      TZ: UTC
+    ports: ['5432:5432']
+    volumes: ['pg_data:/var/lib/postgresql/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U sira']
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ['6379:6379']
+
+  # MinIO: perfil opcional "almacenamiento". Las imágenes minio/minio y minio/mc ya no existen en Docker Hub.
+  minio:
+    image: minio/minio:latest
+    profiles: [almacenamiento]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: sira
+      MINIO_ROOT_PASSWORD: sira-secreto
+    ports: ['9000:9000', '9001:9001']
+    volumes: ['minio_data:/data']
+
+  # Crea el bucket "sira" con lectura pública de las fotos.
+  minio-init:
+    image: minio/mc:latest
+    profiles: [almacenamiento]
+    depends_on: [minio]
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 sira sira-secreto; do sleep 1; done;
+      mc mb -p local/sira && mc anonymous set download local/sira/publico; exit 0"
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ['1025:1025', '8025:8025']
+
+volumes:
+  pg_data:
+  minio_data:

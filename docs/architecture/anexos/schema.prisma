@@ -1,0 +1,1034 @@
+// =============================================================================
+// SIRA · Esquema de base de datos (fuente de verdad del modelo de datos)
+// Documentación: docs/architecture/02-data-model.md
+//
+// Convenciones:
+// - Modelos en PascalCase (Prisma) y tablas en snake_case (@@map).
+// - Fechas en UTC (timestamptz). La UI muestra America/Bogota.
+// - Dinero en PESOS ENTEROS (Int). Nunca Float. La pasarela convierte a centavos.
+// - Nada se borra físicamente: se archiva con `archivadoEn` o con un estado.
+// - La restricción de no solapamiento NO se puede expresar en Prisma:
+//   vive en la migración SQL `..._restricciones_sql` (ver prisma/sql/).
+// =============================================================================
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// -----------------------------------------------------------------------------
+// ENUMS
+// -----------------------------------------------------------------------------
+
+enum Rol {
+  SOLICITANTE
+  RESPONSABLE_ESPACIO
+  APROBADOR
+  TESORERIA
+  ADMINISTRADOR
+  AUDITOR
+}
+
+enum TipoSolicitante {
+  PERSONA_NATURAL
+  EMPRESA
+  ENTIDAD
+  INTERNO
+}
+
+enum TipoDocumentoIdentidad {
+  CC
+  CE
+  NIT
+  PASAPORTE
+  TI
+}
+
+enum EstadoEspacio {
+  DISPONIBLE
+  EN_MANTENIMIENTO
+  FUERA_DE_SERVICIO
+}
+
+enum EstadoFisico {
+  BUENO
+  REGULAR
+  MALO
+}
+
+enum EstadoElemento {
+  EN_SERVICIO
+  EN_REPARACION
+  DADO_DE_BAJA
+}
+
+enum UnidadCobroTarifa {
+  HORA
+  JORNADA_MANANA
+  JORNADA_TARDE
+  JORNADA_NOCHE
+  DIA
+}
+
+enum UnidadCobroServicio {
+  EVENTO
+  HORA
+  PERSONA
+  UNIDAD
+}
+
+enum CategoriaServicio {
+  CULTURAL
+  COMUNICACIONES
+  ALIMENTACION
+  TECNICO
+  LOGISTICA
+}
+
+enum TipoProveedor {
+  INTERNO
+  EXTERNO
+}
+
+enum TipoRecargo {
+  NOCTURNO
+  DOMINICAL
+  FESTIVO
+}
+
+enum EstadoSolicitud {
+  BORRADOR
+  ENVIADA
+  EN_REVISION
+  COTIZADA
+  PAGO_PENDIENTE
+  CONFIRMADA
+  EN_USO
+  FINALIZADA
+  CERRADA
+  RECHAZADA
+  VENCIDA
+  CANCELADA
+  REEMBOLSADA
+}
+
+enum TipoDecision {
+  AVAL
+  APROBACION
+}
+
+enum ResultadoDecision {
+  APROBADA
+  RECHAZADA
+  DEVUELTA
+  RECLASIFICADA
+}
+
+enum EstadoConfirmacionServicio {
+  PENDIENTE
+  ACEPTADO
+  RECHAZADO
+}
+
+enum TipoDocumentoAdjunto {
+  CARTA_SOLICITUD
+  RUT
+  CAMARA_COMERCIO
+  CEDULA_REPRESENTANTE
+  POLIZA
+  ORDEN_SERVICIO
+  OTRO
+}
+
+enum MedioPago {
+  PASARELA
+  CONSIGNACION
+  ORDEN_SERVICIO
+}
+
+enum EstadoOrdenPago {
+  PENDIENTE
+  EN_VERIFICACION
+  APROBADA
+  RECHAZADA
+  VENCIDA
+  ANULADA
+}
+
+enum EstadoReembolso {
+  SOLICITADO
+  APLICADO
+  RECHAZADO
+}
+
+/// Estado de una franja dentro de la tabla de ocupación.
+/// La restricción de exclusión aplica a todo lo que NO esté LIBERADA.
+enum EstadoFranja {
+  RETENIDA
+  CONFIRMADA
+  BLOQUEO
+  LIBERADA
+}
+
+enum OrigenFranja {
+  RESERVA
+  CLASE
+  MANTENIMIENTO
+  FESTIVO
+  EVENTO_INSTITUCIONAL
+  BLOQUEO_MANUAL
+}
+
+enum TipoActa {
+  ENTREGA
+  DEVOLUCION
+}
+
+enum TipoConsecutivo {
+  SOLICITUD
+  COTIZACION
+  ORDEN_PAGO
+  ACTA
+}
+
+// -----------------------------------------------------------------------------
+// IDENTIDAD Y ACCESO
+// -----------------------------------------------------------------------------
+
+model Usuario {
+  id               String    @id @default(uuid()) @db.Uuid
+  correo           String    @unique
+  hashContrasena   String    @map("hash_contrasena")
+  correoVerificado Boolean   @default(false) @map("correo_verificado")
+  /// true si el dominio del correo está en la lista de dominios institucionales.
+  esInstitucional  Boolean   @default(false) @map("es_institucional")
+  intentosFallidos Int       @default(0) @map("intentos_fallidos")
+  bloqueadoHasta   DateTime? @map("bloqueado_hasta") @db.Timestamptz(3)
+  mfaSecreto       String?   @map("mfa_secreto")
+  activo           Boolean   @default(true)
+  ultimoIngresoEn  DateTime? @map("ultimo_ingreso_en") @db.Timestamptz(3)
+  creadoEn         DateTime  @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn    DateTime  @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  roles               UsuarioRol[]
+  solicitante         Solicitante?
+  sesiones            SesionRefresh[]
+  codigosVerificacion CodigoVerificacion[]
+  consentimientos     ConsentimientoDatos[]
+  espaciosResponsable Espacio[]             @relation("ResponsableEspacio")
+  dependenciasJefe    Dependencia[]         @relation("JefeDependencia")
+  decisiones          Decision[]
+  notificaciones      Notificacion[]
+
+  @@map("usuario")
+}
+
+/// Un usuario puede tener varios roles. El alcance (dependencia) limita a
+/// aprobadores y responsables a "lo suyo".
+model UsuarioRol {
+  id            String   @id @default(uuid()) @db.Uuid
+  usuarioId     String   @map("usuario_id") @db.Uuid
+  rol           Rol
+  dependenciaId String?  @map("dependencia_id") @db.Uuid
+  creadoEn      DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
+
+  usuario     Usuario      @relation(fields: [usuarioId], references: [id])
+  dependencia Dependencia? @relation(fields: [dependenciaId], references: [id])
+
+  @@unique([usuarioId, rol, dependenciaId])
+  @@map("usuario_rol")
+}
+
+model SesionRefresh {
+  id         String    @id @default(uuid()) @db.Uuid
+  usuarioId  String    @map("usuario_id") @db.Uuid
+  /// Hash del token de refresco. Nunca se guarda el token en claro.
+  hashToken  String    @unique @map("hash_token")
+  /// Familia de rotación: si se reusa un token viejo, se revoca toda la familia.
+  familia    String    @db.Uuid
+  expiraEn   DateTime  @map("expira_en") @db.Timestamptz(3)
+  revocadoEn DateTime? @map("revocado_en") @db.Timestamptz(3)
+  ip         String?
+  userAgent  String?   @map("user_agent")
+  creadoEn   DateTime  @default(now()) @map("creado_en") @db.Timestamptz(3)
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId])
+  @@map("sesion_refresh")
+}
+
+model CodigoVerificacion {
+  id         String    @id @default(uuid()) @db.Uuid
+  usuarioId  String    @map("usuario_id") @db.Uuid
+  /// VERIFICAR_CORREO | RECUPERAR_CONTRASENA
+  proposito  String
+  hashCodigo String    @map("hash_codigo")
+  expiraEn   DateTime  @map("expira_en") @db.Timestamptz(3)
+  usadoEn    DateTime? @map("usado_en") @db.Timestamptz(3)
+  intentos   Int       @default(0)
+  creadoEn   DateTime  @default(now()) @map("creado_en") @db.Timestamptz(3)
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId, proposito])
+  @@map("codigo_verificacion")
+}
+
+/// RF-AUT-08 · Ley 1581: fecha, IP y versión de la política aceptada.
+model ConsentimientoDatos {
+  id              String   @id @default(uuid()) @db.Uuid
+  usuarioId       String   @map("usuario_id") @db.Uuid
+  versionPolitica String   @map("version_politica")
+  aceptadoEn      DateTime @default(now()) @map("aceptado_en") @db.Timestamptz(3)
+  ip              String
+  userAgent       String?  @map("user_agent")
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@map("consentimiento_datos")
+}
+
+/// Perfil de quien solicita. 1:1 con Usuario.
+model Solicitante {
+  id                 String                 @id @default(uuid()) @db.Uuid
+  usuarioId          String                 @unique @map("usuario_id") @db.Uuid
+  tipo               TipoSolicitante
+  nombres            String
+  apellidos          String?
+  razonSocial        String?                @map("razon_social")
+  tipoDocumento      TipoDocumentoIdentidad @map("tipo_documento")
+  numeroDocumento    String                 @map("numero_documento")
+  representanteLegal String?                @map("representante_legal")
+  telefono           String
+  direccion          String?
+  municipio          String?
+  /// Solo para internos: dependencia o programa al que pertenece.
+  dependenciaId      String?                @map("dependencia_id") @db.Uuid
+  /// RNF-08: fecha a partir de la cual se anonimiza.
+  anonimizadoEn      DateTime?              @map("anonimizado_en") @db.Timestamptz(3)
+  creadoEn           DateTime               @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn      DateTime               @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  usuario     Usuario      @relation(fields: [usuarioId], references: [id])
+  dependencia Dependencia? @relation(fields: [dependenciaId], references: [id])
+  solicitudes Solicitud[]
+
+  @@unique([tipoDocumento, numeroDocumento])
+  @@map("solicitante")
+}
+
+/// Dependencia, programa o proceso. Dueña de espacios y centro de costo del uso interno.
+model Dependencia {
+  id          String   @id @default(uuid()) @db.Uuid
+  codigo      String   @unique
+  nombre      String
+  centroCosto String?  @map("centro_costo")
+  jefeId      String?  @map("jefe_id") @db.Uuid
+  activa      Boolean  @default(true)
+  creadoEn    DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
+
+  jefe         Usuario?      @relation("JefeDependencia", fields: [jefeId], references: [id])
+  espacios     Espacio[]
+  roles        UsuarioRol[]
+  solicitantes Solicitante[]
+  solicitudes  Solicitud[]
+
+  @@map("dependencia")
+}
+
+// -----------------------------------------------------------------------------
+// INVENTARIO
+// -----------------------------------------------------------------------------
+
+model Sede {
+  id            String   @id @default(uuid()) @db.Uuid
+  codigo        String   @unique
+  nombre        String
+  direccion     String?
+  municipio     String
+  latitud       Decimal? @db.Decimal(9, 6)
+  longitud      Decimal? @db.Decimal(9, 6)
+  telefono      String?
+  orden         Int      @default(0)
+  activa        Boolean  @default(true)
+  creadoEn      DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  bloques Bloque[]
+
+  @@map("sede")
+}
+
+/// Bloque A, B, C... Es el eje de navegación del portal.
+model Bloque {
+  id            String   @id @default(uuid()) @db.Uuid
+  sedeId        String   @map("sede_id") @db.Uuid
+  codigo        String
+  nombre        String
+  descripcion   String?
+  /// Plano del bloque con la numeración oficial de los espacios.
+  planoUrl      String?  @map("plano_url")
+  numeroPisos   Int      @default(1) @map("numero_pisos")
+  orden         Int      @default(0)
+  activo        Boolean  @default(true)
+  creadoEn      DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  sede     Sede      @relation(fields: [sedeId], references: [id])
+  espacios Espacio[]
+
+  @@unique([sedeId, codigo])
+  @@map("bloque")
+}
+
+model TipoEspacio {
+  id                     String  @id @default(uuid()) @db.Uuid
+  codigo                 String  @unique
+  nombre                 String
+  /// RN-04: anticipación mínima para solicitar.
+  anticipacionMinimaDias Int     @default(3) @map("anticipacion_minima_dias")
+  /// Si true, la anticipación se cuenta en días hábiles (excluye fines de semana y festivos).
+  anticipacionEnHabiles  Boolean @default(true) @map("anticipacion_en_habiles")
+  /// Aforo a partir del cual se exige póliza de responsabilidad civil. Null = nunca.
+  aforoExigePoliza       Int?    @map("aforo_exige_poliza")
+  icono                  String?
+  activo                 Boolean @default(true)
+
+  espacios  Espacio[]
+  servicios ServicioComplementario[] @relation("ServicioPermitidoEnTipo")
+
+  @@map("tipo_espacio")
+}
+
+/// Unidad reservable, con calendario y tarifa propios.
+model Espacio {
+  id                       String        @id @default(uuid()) @db.Uuid
+  bloqueId                 String        @map("bloque_id") @db.Uuid
+  tipoEspacioId            String        @map("tipo_espacio_id") @db.Uuid
+  dependenciaId            String?       @map("dependencia_id") @db.Uuid
+  responsableId            String?       @map("responsable_id") @db.Uuid
+  /// Código según la numeración de los planos. Ej.: "A-201".
+  codigo                   String        @unique
+  nombre                   String
+  piso                     Int           @default(1)
+  capacidadPersonas        Int           @map("capacidad_personas")
+  areaM2                   Decimal?      @map("area_m2") @db.Decimal(8, 2)
+  descripcion              String?
+  condicionesUso           String?       @map("condiciones_uso")
+  requiereAval             Boolean       @default(true) @map("requiere_aval")
+  esReservable             Boolean       @default(true) @map("es_reservable")
+  estado                   EstadoEspacio @default(DISPONIBLE)
+  valorComercialReferencia Int?          @map("valor_comercial_referencia")
+  /// RF-CAL-12: se suman automáticamente a la franja bloqueada.
+  minutosMontaje           Int           @default(0) @map("minutos_montaje")
+  minutosDesmontaje        Int           @default(0) @map("minutos_desmontaje")
+  /// RN-13 / RF-TAR-08: depósito de garantía (fijo o porcentaje).
+  depositoValorFijo        Int?          @map("deposito_valor_fijo")
+  depositoPorcentaje       Decimal?      @map("deposito_porcentaje") @db.Decimal(5, 2)
+  creadoEn                 DateTime      @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn            DateTime      @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+  archivadoEn              DateTime?     @map("archivado_en") @db.Timestamptz(3)
+
+  bloque      Bloque              @relation(fields: [bloqueId], references: [id])
+  tipo        TipoEspacio         @relation(fields: [tipoEspacioId], references: [id])
+  dependencia Dependencia?        @relation(fields: [dependenciaId], references: [id])
+  responsable Usuario?            @relation("ResponsableEspacio", fields: [responsableId], references: [id])
+  elementos   Elemento[]
+  fotografias Fotografia[]
+  horarios    HorarioOperacion[]
+  tarifas     Tarifa[]
+  franjas     FranjaOcupada[]
+  bloqueos    BloqueoCalendario[]
+  reservas    ReservaItem[]
+
+  @@index([bloqueId])
+  @@index([tipoEspacioId])
+  @@index([capacidadPersonas])
+  @@map("espacio")
+}
+
+/// RF-CAL-03: franja de operación por día de la semana (0 = domingo).
+model HorarioOperacion {
+  id        String @id @default(uuid()) @db.Uuid
+  espacioId String @map("espacio_id") @db.Uuid
+  diaSemana Int    @map("dia_semana")
+  /// "06:00"
+  abre      String
+  /// "22:00"
+  cierra    String
+
+  espacio Espacio @relation(fields: [espacioId], references: [id])
+
+  @@unique([espacioId, diaSemana])
+  @@map("horario_operacion")
+}
+
+/// Bien mueble asociado a un espacio (dotación).
+model Elemento {
+  id               String         @id @default(uuid()) @db.Uuid
+  espacioId        String         @map("espacio_id") @db.Uuid
+  placaInventario  String?        @unique @map("placa_inventario")
+  lote             String?
+  nombre           String
+  marca            String?
+  modelo           String?
+  serie            String?
+  cantidad         Int            @default(1)
+  unidad           String         @default("unidad")
+  estadoFisico     EstadoFisico   @default(BUENO) @map("estado_fisico")
+  estado           EstadoElemento @default(EN_SERVICIO)
+  valorUnitario    Int?           @map("valor_unitario")
+  fechaAdquisicion DateTime?      @map("fecha_adquisicion") @db.Date
+  vidaUtilMeses    Int?           @map("vida_util_meses")
+  esPrestable      Boolean        @default(false) @map("es_prestable")
+  creadoEn         DateTime       @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn    DateTime       @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  espacio     Espacio                   @relation(fields: [espacioId], references: [id])
+  fotografias Fotografia[]
+  historial   HistorialEstadoElemento[]
+
+  @@index([espacioId])
+  @@map("elemento")
+}
+
+model HistorialEstadoElemento {
+  id             String         @id @default(uuid()) @db.Uuid
+  elementoId     String         @map("elemento_id") @db.Uuid
+  estadoAnterior EstadoElemento @map("estado_anterior")
+  estadoNuevo    EstadoElemento @map("estado_nuevo")
+  observacion    String?
+  usuarioId      String         @map("usuario_id") @db.Uuid
+  ocurrioEn      DateTime       @default(now()) @map("ocurrio_en") @db.Timestamptz(3)
+
+  elemento Elemento @relation(fields: [elementoId], references: [id])
+
+  @@map("historial_estado_elemento")
+}
+
+/// Foto de un espacio, de un elemento o de un servicio. Exactamente una FK debe venir llena
+/// (lo garantiza un CHECK en la migración SQL).
+model Fotografia {
+  id               String    @id @default(uuid()) @db.Uuid
+  espacioId        String?   @map("espacio_id") @db.Uuid
+  elementoId       String?   @map("elemento_id") @db.Uuid
+  servicioId       String?   @map("servicio_id") @db.Uuid
+  urlDetalle       String    @map("url_detalle")
+  urlTarjeta       String    @map("url_tarjeta")
+  urlMiniatura     String    @map("url_miniatura")
+  orden            Int       @default(0)
+  esPortada        Boolean   @default(false) @map("es_portada")
+  /// Obligatorio (RF-INV-04, accesibilidad).
+  textoAlternativo String    @map("texto_alternativo")
+  tomadaEn         DateTime? @map("tomada_en") @db.Timestamptz(3)
+  creadoEn         DateTime  @default(now()) @map("creado_en") @db.Timestamptz(3)
+
+  espacio  Espacio?                @relation(fields: [espacioId], references: [id])
+  elemento Elemento?               @relation(fields: [elementoId], references: [id])
+  servicio ServicioComplementario? @relation(fields: [servicioId], references: [id])
+
+  @@map("fotografia")
+}
+
+// -----------------------------------------------------------------------------
+// SERVICIOS COMPLEMENTARIOS
+// -----------------------------------------------------------------------------
+
+model Proveedor {
+  id                       String        @id @default(uuid()) @db.Uuid
+  tipo                     TipoProveedor
+  nombre                   String
+  documento                String?
+  contactoNombre           String?       @map("contacto_nombre")
+  contactoCorreo           String?       @map("contacto_correo")
+  contactoTelefono         String?       @map("contacto_telefono")
+  /// Porcentaje que retiene la institución sobre proveedores externos.
+  porcentajeAdministracion Decimal       @default(0) @map("porcentaje_administracion") @db.Decimal(5, 2)
+  activo                   Boolean       @default(true)
+
+  servicios ServicioComplementario[]
+
+  @@map("proveedor")
+}
+
+model ServicioComplementario {
+  id                     String              @id @default(uuid()) @db.Uuid
+  proveedorId            String              @map("proveedor_id") @db.Uuid
+  nombre                 String
+  categoria              CategoriaServicio
+  descripcion            String?
+  unidadCobro            UnidadCobroServicio @map("unidad_cobro")
+  requiereConfirmacion   Boolean             @default(true) @map("requiere_confirmacion")
+  anticipacionMinimaDias Int                 @default(3) @map("anticipacion_minima_dias")
+  cantidadMaxima         Int?                @map("cantidad_maxima")
+  activo                 Boolean             @default(true)
+
+  proveedor       Proveedor      @relation(fields: [proveedorId], references: [id])
+  /// RF-SVC-05: si está vacío, el servicio aplica a todos los tipos de espacio.
+  tiposPermitidos TipoEspacio[]  @relation("ServicioPermitidoEnTipo")
+  tarifas         Tarifa[]
+  items           ServicioItem[]
+  fotografias     Fotografia[]
+
+  @@map("servicio_complementario")
+}
+
+// -----------------------------------------------------------------------------
+// TARIFARIO
+// -----------------------------------------------------------------------------
+
+/// Tarifa de un espacio O de un servicio (CHECK en SQL: exactamente uno).
+model Tarifa {
+  id              String             @id @default(uuid()) @db.Uuid
+  espacioId       String?            @map("espacio_id") @db.Uuid
+  servicioId      String?            @map("servicio_id") @db.Uuid
+  tipoSolicitante TipoSolicitante    @map("tipo_solicitante")
+  /// Para espacios. En servicios la unidad la define el servicio.
+  unidad          UnidadCobroTarifa?
+  /// Valor en pesos enteros. Si `valorEnSmmlv` existe, este se recalcula cada año (RN-06).
+  valor           Int
+  valorEnSmmlv    Decimal?           @map("valor_en_smmlv") @db.Decimal(10, 4)
+  vigenciaDesde   DateTime           @map("vigencia_desde") @db.Date
+  vigenciaHasta   DateTime?          @map("vigencia_hasta") @db.Date
+  /// Acto administrativo que respalda la tarifa (Ley 30 de 1992).
+  acuerdoSoporte  String?            @map("acuerdo_soporte")
+  ivaAplica       Boolean            @default(false) @map("iva_aplica")
+  porcentajeIva   Decimal            @default(0) @map("porcentaje_iva") @db.Decimal(5, 2)
+  creadoEn        DateTime           @default(now()) @map("creado_en") @db.Timestamptz(3)
+
+  espacio  Espacio?                @relation(fields: [espacioId], references: [id])
+  servicio ServicioComplementario? @relation(fields: [servicioId], references: [id])
+
+  @@index([espacioId, tipoSolicitante, vigenciaDesde])
+  @@index([servicioId, tipoSolicitante, vigenciaDesde])
+  @@map("tarifa")
+}
+
+model Recargo {
+  id         String      @id @default(uuid()) @db.Uuid
+  tipo       TipoRecargo @unique
+  porcentaje Decimal     @db.Decimal(5, 2)
+  /// Para NOCTURNO: hora desde la que aplica ("18:00").
+  desdeHora  String?     @map("desde_hora")
+  activo     Boolean     @default(true)
+
+  @@map("recargo")
+}
+
+model Festivo {
+  fecha  DateTime @id @db.Date
+  nombre String
+
+  @@map("festivo")
+}
+
+/// RN-06: valor del SMMLV por año para recalcular tarifas indexadas.
+model Smmlv {
+  anio  Int @id
+  valor Int
+
+  @@map("smmlv")
+}
+
+// -----------------------------------------------------------------------------
+// DISPONIBILIDAD
+// -----------------------------------------------------------------------------
+
+/// Regla de bloqueo (clase, mantenimiento, festivo...). Las recurrencias se
+/// expanden en filas de FranjaOcupada para el periodo vigente.
+model BloqueoCalendario {
+  id           String       @id @default(uuid()) @db.Uuid
+  espacioId    String       @map("espacio_id") @db.Uuid
+  motivo       OrigenFranja
+  descripcion  String?
+  inicio       DateTime     @db.Timestamptz(3)
+  fin          DateTime     @db.Timestamptz(3)
+  /// Regla RRULE de iCalendar. Null = no se repite.
+  rrule        String?
+  /// Hasta cuándo se expande la recurrencia.
+  repetirHasta DateTime?    @map("repetir_hasta") @db.Timestamptz(3)
+  /// MANUAL | IMPORTACION_HORARIO
+  origen       String       @default("MANUAL")
+  creadoPorId  String       @map("creado_por_id") @db.Uuid
+  creadoEn     DateTime     @default(now()) @map("creado_en") @db.Timestamptz(3)
+  anuladoEn    DateTime?    @map("anulado_en") @db.Timestamptz(3)
+
+  espacio Espacio         @relation(fields: [espacioId], references: [id])
+  franjas FranjaOcupada[]
+
+  @@map("bloqueo_calendario")
+}
+
+/// TABLA ÚNICA DE OCUPACIÓN. Toda reserva y todo bloqueo ocupa una fila aquí.
+/// La columna generada `periodo` (tstzrange) y la restricción de exclusión
+/// `sin_solapamiento` se crean en SQL: dos filas activas del mismo espacio
+/// no pueden solaparse. Así reservas, clases y mantenimientos chocan entre sí
+/// a nivel de motor (RN-01, RN-03, RNF-05).
+model FranjaOcupada {
+  id              String                    @id @default(uuid()) @db.Uuid
+  espacioId       String                    @map("espacio_id") @db.Uuid
+  /// Inicio real de la ocupación, YA incluyendo el montaje.
+  inicio          DateTime                  @db.Timestamptz(3)
+  /// Fin real de la ocupación, YA incluyendo el desmontaje.
+  fin             DateTime                  @db.Timestamptz(3)
+  /// Columna GENERADA en SQL: tstzrange(inicio, fin, '[)'). Solo lectura.
+  /// Se declara aquí para que Prisma no intente borrarla en futuras migraciones.
+  periodo         Unsupported("tstzrange")?
+  estado          EstadoFranja
+  origen          OrigenFranja
+  reservaItemId   String?                   @unique @map("reserva_item_id") @db.Uuid
+  bloqueoId       String?                   @map("bloqueo_id") @db.Uuid
+  /// Solo para reservas retenidas: momento en que se liberan si nadie actúa.
+  retenidaHasta   DateTime?                 @map("retenida_hasta") @db.Timestamptz(3)
+  /// RF-CAL-05: el calendario público muestra este nombre solo si es público.
+  etiquetaPublica String?                   @map("etiqueta_publica")
+  creadoEn        DateTime                  @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn   DateTime                  @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  espacio     Espacio            @relation(fields: [espacioId], references: [id])
+  reservaItem ReservaItem?       @relation(fields: [reservaItemId], references: [id])
+  bloqueo     BloqueoCalendario? @relation(fields: [bloqueoId], references: [id])
+
+  @@index([espacioId, inicio])
+  @@index([estado, retenidaHasta])
+  @@map("franja_ocupada")
+}
+
+// -----------------------------------------------------------------------------
+// SOLICITUDES Y RESERVAS
+// -----------------------------------------------------------------------------
+
+model Solicitud {
+  id                      String          @id @default(uuid()) @db.Uuid
+  /// SOL-2026-0001 · RN-17: único, secuencial, no reutilizable.
+  consecutivo             String?         @unique
+  solicitanteId           String          @map("solicitante_id") @db.Uuid
+  /// Dependencia que avala (uso interno) — centro de costo imputado.
+  dependenciaId           String?         @map("dependencia_id") @db.Uuid
+  objetoEvento            String          @map("objeto_evento")
+  descripcion             String?
+  asistentesEstimados     Int             @map("asistentes_estimados")
+  responsableEnSitio      String?         @map("responsable_en_sitio")
+  telefonoContacto        String?         @map("telefono_contacto")
+  eventoPublico           Boolean         @default(false) @map("evento_publico")
+  /// El usuario interno marcó "uso institucional" (RN-07 b).
+  declaraUsoInstitucional Boolean         @default(false) @map("declara_uso_institucional")
+  /// Resultado de evaluar RN-07 completa. Lo calcula el dominio, no el cliente.
+  esExenta                Boolean         @default(false) @map("es_exenta")
+  /// Tipo de solicitante con el que se tarifa (puede diferir del perfil, RN-10).
+  tipoTarifa              TipoSolicitante @map("tipo_tarifa")
+  estado                  EstadoSolicitud @default(BORRADOR)
+  enviadaEn               DateTime?       @map("enviada_en") @db.Timestamptz(3)
+  /// Fecha límite de la etapa actual (revisión o pago). La usa el job de vencimiento.
+  venceEn                 DateTime?       @map("vence_en") @db.Timestamptz(3)
+  motivoCancelacion       String?         @map("motivo_cancelacion")
+  canceladaPorInstitucion Boolean         @default(false) @map("cancelada_por_institucion")
+  creadoEn                DateTime        @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn           DateTime        @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  solicitante  Solicitante                @relation(fields: [solicitanteId], references: [id])
+  dependencia  Dependencia?               @relation(fields: [dependenciaId], references: [id])
+  reservas     ReservaItem[]
+  servicios    ServicioItem[]
+  documentos   DocumentoAdjunto[]
+  decisiones   Decision[]
+  cotizaciones Cotizacion[]
+  actas        Acta[]
+  historial    HistorialEstadoSolicitud[]
+
+  @@index([estado, venceEn])
+  @@index([solicitanteId])
+  @@map("solicitud")
+}
+
+/// Bitácora específica de la máquina de estados de una solicitud.
+model HistorialEstadoSolicitud {
+  id             String           @id @default(uuid()) @db.Uuid
+  solicitudId    String           @map("solicitud_id") @db.Uuid
+  estadoAnterior EstadoSolicitud? @map("estado_anterior")
+  estadoNuevo    EstadoSolicitud  @map("estado_nuevo")
+  usuarioId      String?          @map("usuario_id") @db.Uuid
+  observacion    String?
+  ocurrioEn      DateTime         @default(now()) @map("ocurrio_en") @db.Timestamptz(3)
+
+  solicitud Solicitud @relation(fields: [solicitudId], references: [id])
+
+  @@index([solicitudId])
+  @@map("historial_estado_solicitud")
+}
+
+/// Una franja de un espacio dentro de una solicitud.
+model ReservaItem {
+  id            String             @id @default(uuid()) @db.Uuid
+  solicitudId   String             @map("solicitud_id") @db.Uuid
+  espacioId     String             @map("espacio_id") @db.Uuid
+  /// Hora del evento (sin montaje). La franja ocupada sí incluye montaje.
+  inicio        DateTime           @db.Timestamptz(3)
+  fin           DateTime           @db.Timestamptz(3)
+  tarifaId      String?            @map("tarifa_id") @db.Uuid
+  unidad        UnidadCobroTarifa?
+  cantidad      Decimal            @default(0) @db.Decimal(8, 2)
+  valorUnitario Int                @default(0) @map("valor_unitario")
+  recargos      Int                @default(0)
+  subtotal      Int                @default(0)
+
+  solicitud Solicitud      @relation(fields: [solicitudId], references: [id])
+  espacio   Espacio        @relation(fields: [espacioId], references: [id])
+  franja    FranjaOcupada?
+
+  @@index([solicitudId])
+  @@map("reserva_item")
+}
+
+model ServicioItem {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  solicitudId        String                     @map("solicitud_id") @db.Uuid
+  servicioId         String                     @map("servicio_id") @db.Uuid
+  cantidad           Int
+  valorUnitario      Int                        @map("valor_unitario")
+  subtotal           Int
+  estadoConfirmacion EstadoConfirmacionServicio @default(PENDIENTE) @map("estado_confirmacion")
+  observaciones      String?
+
+  solicitud Solicitud              @relation(fields: [solicitudId], references: [id])
+  servicio  ServicioComplementario @relation(fields: [servicioId], references: [id])
+
+  @@map("servicio_item")
+}
+
+model DocumentoAdjunto {
+  id          String               @id @default(uuid()) @db.Uuid
+  solicitudId String               @map("solicitud_id") @db.Uuid
+  tipo        TipoDocumentoAdjunto
+  nombre      String
+  url         String
+  tamanoBytes Int                  @map("tamano_bytes")
+  creadoEn    DateTime             @default(now()) @map("creado_en") @db.Timestamptz(3)
+
+  solicitud Solicitud @relation(fields: [solicitudId], references: [id])
+
+  @@map("documento_adjunto")
+}
+
+model Decision {
+  id            String            @id @default(uuid()) @db.Uuid
+  solicitudId   String            @map("solicitud_id") @db.Uuid
+  tipo          TipoDecision
+  resultado     ResultadoDecision
+  /// Obligatoria si es RECHAZADA, DEVUELTA o RECLASIFICADA (RF-APR-03).
+  motivo        String?
+  decididaPorId String            @map("decidida_por_id") @db.Uuid
+  decididaEn    DateTime          @default(now()) @map("decidida_en") @db.Timestamptz(3)
+
+  solicitud   Solicitud @relation(fields: [solicitudId], references: [id])
+  decididaPor Usuario   @relation(fields: [decididaPorId], references: [id])
+
+  @@index([solicitudId])
+  @@map("decision")
+}
+
+model Cotizacion {
+  id               String   @id @default(uuid()) @db.Uuid
+  consecutivo      String   @unique
+  solicitudId      String   @map("solicitud_id") @db.Uuid
+  subtotal         Int
+  descuento        Int      @default(0)
+  iva              Int      @default(0)
+  total            Int
+  depositoGarantia Int      @default(0) @map("deposito_garantia")
+  /// Para solicitudes exentas: valor que se habría cobrado (RN-08).
+  valorReferencia  Int      @default(0) @map("valor_referencia")
+  esExenta         Boolean  @default(false) @map("es_exenta")
+  validaHasta      DateTime @map("valida_hasta") @db.Timestamptz(3)
+  /// Desglose congelado al emitir (RN-05: la tarifa no cambia después).
+  desglose         Json
+  pdfUrl           String?  @map("pdf_url")
+  creadaEn         DateTime @default(now()) @map("creada_en") @db.Timestamptz(3)
+
+  solicitud   Solicitud   @relation(fields: [solicitudId], references: [id])
+  ordenesPago OrdenPago[]
+
+  @@map("cotizacion")
+}
+
+// -----------------------------------------------------------------------------
+// PAGOS
+// -----------------------------------------------------------------------------
+
+model OrdenPago {
+  id                   String          @id @default(uuid()) @db.Uuid
+  /// Referencia única e irrepetible (RN-17, RF-PAG-03). Ej.: OP-2026-000123
+  referencia           String          @unique
+  cotizacionId         String          @map("cotizacion_id") @db.Uuid
+  valor                Int
+  medio                MedioPago
+  estado               EstadoOrdenPago @default(PENDIENTE)
+  /// WOMPI | EPAYCO | BOLD | ECOLLECT | null
+  pasarela             String?
+  transaccionExternaId String?         @unique @map("transaccion_externa_id")
+  soporteUrl           String?         @map("soporte_url")
+  verificadaPorId      String?         @map("verificada_por_id") @db.Uuid
+  observacionTesoreria String?         @map("observacion_tesoreria")
+  pagadoEn             DateTime?       @map("pagado_en") @db.Timestamptz(3)
+  venceEn              DateTime        @map("vence_en") @db.Timestamptz(3)
+  creadaEn             DateTime        @default(now()) @map("creada_en") @db.Timestamptz(3)
+  actualizadaEn        DateTime        @updatedAt @map("actualizada_en") @db.Timestamptz(3)
+
+  cotizacion Cotizacion       @relation(fields: [cotizacionId], references: [id])
+  eventos    EventoPasarela[]
+  reembolsos Reembolso[]
+
+  @@index([estado, venceEn])
+  @@map("orden_pago")
+}
+
+/// Todo evento de webhook se guarda CRUDO antes de procesarse (sección 11.1).
+model EventoPasarela {
+  id              String    @id @default(uuid()) @db.Uuid
+  proveedor       String
+  /// Id del evento en la pasarela. Unique = idempotencia (RF-PAG-05).
+  idEventoExterno String    @map("id_evento_externo")
+  ordenPagoId     String?   @map("orden_pago_id") @db.Uuid
+  cuerpo          Json
+  firmaValida     Boolean   @map("firma_valida")
+  procesadoEn     DateTime? @map("procesado_en") @db.Timestamptz(3)
+  error           String?
+  recibidoEn      DateTime  @default(now()) @map("recibido_en") @db.Timestamptz(3)
+
+  ordenPago OrdenPago? @relation(fields: [ordenPagoId], references: [id])
+
+  @@unique([proveedor, idEventoExterno])
+  @@map("evento_pasarela")
+}
+
+model Reembolso {
+  id          String          @id @default(uuid()) @db.Uuid
+  ordenPagoId String          @map("orden_pago_id") @db.Uuid
+  valor       Int
+  motivo      String
+  estado      EstadoReembolso @default(SOLICITADO)
+  soporteUrl  String?         @map("soporte_url")
+  creadoEn    DateTime        @default(now()) @map("creado_en") @db.Timestamptz(3)
+  aplicadoEn  DateTime?       @map("aplicado_en") @db.Timestamptz(3)
+
+  ordenPago OrdenPago @relation(fields: [ordenPagoId], references: [id])
+
+  @@map("reembolso")
+}
+
+// -----------------------------------------------------------------------------
+// ACTAS
+// -----------------------------------------------------------------------------
+
+model Acta {
+  id                  String   @id @default(uuid()) @db.Uuid
+  consecutivo         String   @unique
+  solicitudId         String   @map("solicitud_id") @db.Uuid
+  tipo                TipoActa
+  /// [{ elementoId, nombre, cantidadEsperada, cantidadEncontrada, estadoFisico, ok }]
+  checklist           Json
+  observaciones       String?
+  fotosUrls           String[] @map("fotos_urls")
+  firmaResponsableUrl String?  @map("firma_responsable_url")
+  firmaSolicitanteUrl String?  @map("firma_solicitante_url")
+  pdfUrl              String?  @map("pdf_url")
+  generadaPorId       String   @map("generada_por_id") @db.Uuid
+  generadaEn          DateTime @default(now()) @map("generada_en") @db.Timestamptz(3)
+
+  solicitud Solicitud @relation(fields: [solicitudId], references: [id])
+  novedades Novedad[]
+
+  @@unique([solicitudId, tipo])
+  @@map("acta")
+}
+
+model Novedad {
+  id          String    @id @default(uuid()) @db.Uuid
+  actaId      String    @map("acta_id") @db.Uuid
+  elementoId  String?   @map("elemento_id") @db.Uuid
+  descripcion String
+  valorDano   Int       @default(0) @map("valor_dano")
+  /// DESCONTAR_DEPOSITO | COBRO_ADICIONAL | SIN_COBRO
+  tratamiento String
+  resueltaEn  DateTime? @map("resuelta_en") @db.Timestamptz(3)
+
+  acta Acta @relation(fields: [actaId], references: [id])
+
+  @@map("novedad")
+}
+
+// -----------------------------------------------------------------------------
+// TRANSVERSALES
+// -----------------------------------------------------------------------------
+
+/// RN-17: contador por tipo y año. Se incrementa con UPDATE ... RETURNING
+/// dentro de la transacción; nunca se reutiliza un número.
+model Consecutivo {
+  tipo   TipoConsecutivo
+  anio   Int
+  ultimo Int             @default(0)
+
+  @@id([tipo, anio])
+  @@map("consecutivo")
+}
+
+/// RF-AUD-01: bitácora inmutable. Un trigger SQL impide UPDATE y DELETE.
+model Bitacora {
+  id            BigInt   @id @default(autoincrement())
+  usuarioId     String?  @map("usuario_id") @db.Uuid
+  accion        String
+  entidad       String
+  entidadId     String?  @map("entidad_id")
+  datosAntes    Json?    @map("datos_antes")
+  datosDespues  Json?    @map("datos_despues")
+  ip            String?
+  userAgent     String?  @map("user_agent")
+  correlacionId String?  @map("correlacion_id")
+  ocurrioEn     DateTime @default(now()) @map("ocurrio_en") @db.Timestamptz(3)
+
+  @@index([entidad, entidadId])
+  @@index([usuarioId, ocurrioEn])
+  @@index([ocurrioEn])
+  @@map("bitacora")
+}
+
+model Notificacion {
+  id        String    @id @default(uuid()) @db.Uuid
+  usuarioId String    @map("usuario_id") @db.Uuid
+  titulo    String
+  cuerpo    String
+  enlace    String?
+  leidaEn   DateTime? @map("leida_en") @db.Timestamptz(3)
+  creadaEn  DateTime  @default(now()) @map("creada_en") @db.Timestamptz(3)
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId, leidaEn])
+  @@map("notificacion")
+}
+
+model PlantillaCorreo {
+  codigo        String   @id
+  asunto        String
+  cuerpoHtml    String   @map("cuerpo_html")
+  actualizadoEn DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  @@map("plantilla_correo")
+}
+
+/// Parámetros editables en tiempo de ejecución (RF-AUT-05 y similares).
+/// Claves: dominios_institucionales, horas_retencion_revision, horas_plazo_pago, ...
+model Parametro {
+  clave         String   @id
+  valor         Json
+  descripcion   String?
+  actualizadoEn DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+
+  @@map("parametro")
+}
