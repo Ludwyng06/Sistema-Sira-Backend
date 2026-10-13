@@ -1,7 +1,7 @@
 # SIRA - Frontend
 
 > Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS 4 · FullCalendar.
-> Código en `apps/frontend/`.
+> Código en la raíz del repositorio Frontend.
 
 ## 1. La idea que guía todo: navegar como está organizado el campus
 
@@ -56,7 +56,7 @@ Grupos de rutas de App Router (los paréntesis no aparecen en la URL):
 src/app/
 ├─ (publico)/                       sin sesión · layout con encabezado institucional
 │  ├─ page.tsx                      /            Inicio: bloques + buscador por aforo + calendario de la sede
-│  ├─ bloques/[codigo]/page.tsx     /bloques/A   Plano + espacios por piso + filtros
+│  ├─ sedes/[sede]/bloques/[bloque]/page.tsx  /sedes/MOC/bloques/A   Plano + espacios por piso + filtros
 │  ├─ espacios/[codigo]/page.tsx    /espacios/A-201  Ficha del espacio + calendario
 │  ├─ buscar/page.tsx               /buscar      Búsqueda inversa (fecha, hora, asistentes)
 │  ├─ servicios/page.tsx            /servicios   Catálogo complementario

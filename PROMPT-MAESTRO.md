@@ -8,17 +8,17 @@ Una plataforma web para que la Institución Universitaria del Putumayo administr
 
 ## Estado actual
 
-**Desde cero.** Existe solo esta documentación (`docs/architecture/` y sus `anexos/`). Lo primero que haces es la **Fase 0** de `docs/architecture/09-inicializacion-y-git.md`: crear el monorepo, inicializar backend y frontend, copiar el esquema Prisma y las restricciones SQL de los anexos, crear la migración inicial, el seed, el módulo `inventario` de ejemplo y subir todo a GitHub. Después se sigue el plan de `08-plan-de-trabajo-20-dias.md`.
+**La Fase 0 ya está hecha**, en dos repositorios independientes: [Sistema-Sira-Backend](https://github.com/Ludwyng06/Sistema-Sira-Backend) (NestJS 12 + Prisma 7, con el esquema, las restricciones SQL, la migración inicial, el seed y el módulo `inventario` de ejemplo) y [Sistema-Sira-Frontend](https://github.com/Ludwyng06/Sistema-Sira-Frontend) (Next.js 16). La receta está en `docs/architecture/09-inicializacion-y-git.md`. La copia de `docs/` del Backend es la fuente de verdad. Ahora se sigue el plan de `08-plan-de-trabajo-20-dias.md`.
 
 Los anexos ya están probados y se copian **tal cual**, no se reescriben:
 
 | Anexo | Destino | Qué es |
 |---|---|---|
-| `schema.prisma` | `apps/backend/prisma/schema.prisma` | Modelo de datos completo, validado con Prisma 7.10 |
-| `restricciones.sql` | `apps/backend/prisma/sql/restricciones.sql` | Restricción de no solapamiento, CHECKs y bitácora inmutable (probado en PostgreSQL 16, incluida la prueba de carrera) |
-| `maquina-estados.ts` + `.spec.ts` | `apps/backend/src/modules/reservas/dominio/` | Transiciones válidas de la solicitud |
-| `aforo.ts` + `.spec.ts` | `apps/backend/src/modules/inventario/dominio/` | Evaluación de aforo y orden por ajuste (RN-18 + aporte E2) |
-| `pasarela.port.ts` | `apps/backend/src/modules/pagos/puertos/` | Puerto de pagos (solo la interfaz) |
+| `schema.prisma` | `prisma/schema.prisma` (repo Backend) | Modelo de datos completo, validado con Prisma 7.10 |
+| `restricciones.sql` | `prisma/sql/restricciones.sql` (repo Backend) | Restricción de no solapamiento, CHECKs y bitácora inmutable (probado en PostgreSQL 16, incluida la prueba de carrera) |
+| `maquina-estados.ts` + `.spec.ts` | `src/modules/reservas/dominio/` (repo Backend) | Transiciones válidas de la solicitud |
+| `aforo.ts` + `.spec.ts` | `src/modules/inventario/dominio/` (repo Backend) | Evaluación de aforo y orden por ajuste (RN-18 + aporte E2) |
+| `pasarela.port.ts` | `src/modules/pagos/puertos/` (repo Backend) | Puerto de pagos (solo la interfaz) |
 
 ## Alcance de esta fase (avance de 20 días, hasta el 1 de nov. de 2026)
 
@@ -30,18 +30,18 @@ Los anexos ya están probados y se copian **tal cual**, no se reescriben:
 
 | Capa | Tecnología |
 |---|---|
-| Monorepo | pnpm 10 workspaces, Node 22 |
+| Repositorios | Dos repositorios independientes (Backend y Frontend), pnpm 10, Node 22 |
 | Backend | NestJS 12 (módulos ES: imports relativos con extensión `.js`), TypeScript, class-validator, @nestjs/swagger, @nestjs/jwt + passport-jwt, @nestjs/throttler, @nestjs/schedule, BullMQ |
 | BD | PostgreSQL 16 + Prisma 7.10 con `@prisma/adapter-pg`; cliente generado en `src/generated/prisma` |
 | Frontend | Next.js 16 App Router, React 19, Tailwind CSS 4, FullCalendar 6, lucide-react |
 | Pruebas | Vitest (back) |
 | Infra local | Docker Compose |
 
-**Next.js 16 tiene APIs que pueden diferir de tu entrenamiento: lee `apps/frontend/node_modules/next/dist/docs/` antes de usar algo que no esté ya en el código.**
+**Next.js 16 tiene APIs que pueden diferir de tu entrenamiento: lee `node_modules/next/dist/docs/` del repositorio Frontend antes de usar algo que no esté ya en el código.**
 
 ## Modelo de datos
 
-La fuente de verdad es `apps/backend/prisma/schema.prisma` (copiado de `docs/architecture/anexos/`); léelo completo antes de tocar cualquier módulo. Resumen:
+La fuente de verdad es `prisma/schema.prisma` del repositorio Backend (copiado de `docs/architecture/anexos/`); léelo completo antes de tocar cualquier módulo. Resumen:
 
 - **Identidad:** `Usuario` (correo único, hash Argon2id, `correoVerificado`, `esInstitucional`) · `UsuarioRol` (rol + dependencia opcional) · `Solicitante` (perfil 1:1: tipo, documento, razón social) · `Dependencia` (dueña de espacios, `jefeId` = aprobador) · `SesionRefresh` · `CodigoVerificacion` · `ConsentimientoDatos`.
 - **Inventario:** `Sede` → `Bloque` (`planoUrl`) → `Espacio` (`codigo` según plano tipo `A-201`, `piso`, `capacidadPersonas`, montaje/desmontaje, depósito, `responsableId`, `dependenciaId`) → `Elemento`. `TipoEspacio` (anticipación mínima, aforo que exige póliza). `HorarioOperacion`. `Fotografia` (de espacio, elemento o servicio; texto alternativo obligatorio).
@@ -101,7 +101,7 @@ Lista completa en `docs/architecture/03-backend.md` §3. Las que nunca se rompen
 
 ## Decisiones ya tomadas (no reabrir)
 
-- **Monorepo con pnpm**: tres personas, tipos y scripts compartidos, un solo `docker compose`.
+- **Dos repositorios, uno por aplicación (Backend y Frontend), con pnpm**: decisión del equipo.
 - **Tabla única de ocupación** con restricción de exclusión: es lo que hace imposible la doble reserva contra clases y mantenimientos.
 - **Pesos enteros** en vez de centavos: COP no tiene decimales; ×100 solo en el adaptador de pasarela.
 - **Pago por consignación primero**, pasarela después: así funciona hoy y no depende del convenio.

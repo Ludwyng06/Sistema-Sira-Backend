@@ -1,7 +1,7 @@
 # SIRA - Backend
 
 > NestJS 12 (ESM, TypeScript) · Prisma 7 con `@prisma/adapter-pg` · PostgreSQL 16 · BullMQ sobre Redis.
-> Código en `apps/backend/`. Documentación interactiva de la API en `http://localhost:3001/docs` (OpenAPI generado del código, RNF-17).
+> Código en la raíz del repositorio Backend. Documentación interactiva de la API en `http://localhost:3001/docs` (OpenAPI generado del código, RNF-17).
 
 ## 1. Estructura de módulos
 
@@ -175,11 +175,12 @@ Prefijo global `/api`. Autenticación `Bearer` salvo los marcados 🌐 (público
 | POST | `/auth/recuperar` · `/auth/restablecer` | 🌐 | Recuperación de contraseña. |
 | GET | `/auth/yo` | Autenticado | Usuario, roles, perfil. |
 | GET | `/sedes` | 🌐 | Sedes con conteo de bloques y espacios. |
-| GET | `/sedes/:id/bloques` | 🌐 | Bloques de una sede con conteo por tipo de espacio. |
-| GET | `/bloques/:id` | 🌐 | Bloque con plano y sus espacios agrupados por piso. |
-| GET | `/espacios` | 🌐 | Filtros: `sedeId`, `bloqueId`, `tipo`, `capacidadMin`, `desde`/`hasta` (solo libres). |
-| GET | `/espacios/:id` | 🌐 | Ficha: fotos, elementos, condiciones, tarifas públicas. |
-| POST/PATCH | `/espacios` · `/espacios/:id` | Admin | CRUD (archivar en vez de borrar). |
+| GET | `/sedes/:sede/bloques` | 🌐 | Bloques de una sede (por código, ej. `MOC`) con conteo por tipo de espacio. |
+| GET | `/sedes/:sede/bloques/:bloque?asistentes=` | 🌐 | Bloque (por código, ej. `A`) con plano y sus espacios agrupados por piso. Con `asistentes` oculta los que no caben y ordena por ajuste. |
+| GET | `/espacios` | 🌐 | Filtros: `sede`, `bloque`, `tipo`, `asistentes`, `pagina`, `porPagina` (códigos). |
+| GET | `/espacios/:codigo` | 🌐 | Ficha: fotos, elementos, condiciones, tarifas públicas. |
+| GET | `/tipos-espacio` | 🌐 | Tipos de espacio activos y sus reglas de anticipación. |
+| POST · PATCH | `/espacios` · `/espacios/:codigo/archivar` | Admin | Crear y archivar (204; archivar en vez de borrar). |
 | POST | `/espacios/:id/fotos` | Admin, Responsable | Multipart, máx. 10 MB, genera variantes WebP. |
 | CRUD | `/sedes`, `/bloques`, `/tipos-espacio`, `/elementos` | Admin | |
 | GET | `/disponibilidad` | 🌐 | `espacioId`, `desde`, `hasta` → franjas con estado. Datos personales nunca. |

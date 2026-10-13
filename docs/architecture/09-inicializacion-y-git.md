@@ -1,104 +1,110 @@
-# SIRA - Inicialización del proyecto y Git
+# SIRA - Inicialización de los repositorios y Git
 
-> Receta para el agente (Orca) que inicializa el repositorio. Se ejecuta **una sola vez**, en orden. Al terminar, el equipo clona, corre cuatro comandos y ve el portal con datos.
+> Receta para el agente (Orca) que inicializa los repositorios. Se ejecuta **una sola vez**, en orden. Al terminar, el equipo clona, corre unos pocos comandos y ve el portal con datos.
 > Versiones verificadas el 12 de octubre de 2026 al generar los proyectos con sus CLI oficiales.
+> SIRA vive en **dos repositorios independientes** (no es un monorepo):
+> - Backend: https://github.com/Ludwyng06/Sistema-Sira-Backend
+> - Frontend: https://github.com/Ludwyng06/Sistema-Sira-Frontend
 
 ## Fase 0 · Resultado esperado
 
+Repositorio **Backend** (NestJS 12 + Prisma 7), todo en la raíz del repositorio:
+
 ```
-sira/
+Sistema-Sira-Backend/
 ├─ .gitignore
 ├─ .nvmrc                       22
-├─ README.md                    cómo arrancar (pasos de la sección 8)
+├─ README.md                    cómo arrancar (sección 8)
 ├─ PROMPT-MAESTRO.md
-├─ package.json                 scripts de la raíz
-├─ pnpm-workspace.yaml
-├─ docker-compose.yml
-├─ docs/architecture/           01 a 09 + anexos/
-└─ apps/
-   ├─ backend/                  NestJS 12 + Prisma 7
-   └─ frontend/                 Next.js 16 + Tailwind 4
+├─ package.json                 scripts del backend (incluye db:*)
+├─ docker-compose.yml           PostgreSQL, Redis, MinIO y Mailpit
+├─ prisma.config.ts
+├─ prisma/                      schema.prisma, migrations/, sql/restricciones.sql, seed.ts
+├─ scripts/                     crear-migracion-inicial.mjs
+├─ src/                         main.ts, app.module.ts, shared/, modules/
+└─ docs/architecture/           01 a 09 + anexos/   (FUENTE DE VERDAD)
+```
+
+Repositorio **Frontend** (Next.js 16 + Tailwind 4), todo en la raíz del repositorio:
+
+```
+Sistema-Sira-Frontend/
+├─ .gitignore
+├─ .nvmrc                       22
+├─ README.md                    cómo arrancar (sección 8)
+├─ PROMPT-MAESTRO.md
+├─ package.json
+├─ .env.example
+├─ public/
+├─ src/                         app/, components/, lib/
+└─ docs/architecture/           copia de la documentación del Backend
 ```
 
 **Criterio de terminado de la Fase 0:**
-- [ ] `pnpm install && pnpm db:up && pnpm db:init && pnpm db:seed && pnpm dev` funciona en una máquina limpia.
-- [ ] `http://localhost:3001/docs` muestra Swagger con los endpoints de inventario y `/api/salud` responde `ok`.
-- [ ] `http://localhost:3000` muestra la sede Mocoa con los bloques A, B y C; al entrar a un bloque se ven sus espacios por piso con aforo; la ficha de un espacio muestra fotos (o un marcador), dotación y tarifas.
-- [ ] `pnpm build` y `pnpm test` pasan (incluye los `.spec.ts` de los anexos).
-- [ ] Todo está en GitHub en `main`, con `main` protegida.
+- [ ] **Backend:** `pnpm install && pnpm db:up && pnpm db:init && pnpm db:seed && pnpm dev` funciona en una máquina limpia.
+- [ ] **Backend:** `http://localhost:3001/docs` muestra Swagger con los endpoints de inventario y `/api/salud` responde `ok`.
+- [ ] **Frontend:** con el backend arriba, `http://localhost:3000` muestra la sede Mocoa con los bloques A, B y C; al entrar a un bloque se ven sus espacios por piso con aforo; la ficha de un espacio muestra fotos (o un marcador), dotación y tarifas.
+- [ ] En cada repositorio, `pnpm build` pasa; en el Backend, `pnpm test` también (incluye los `.spec.ts` de los anexos).
+- [ ] Todo está en GitHub: base en `main`, `develop` creada desde `main`, y ambas protegidas.
 
 ## 1. Requisitos de la máquina
 
 Node.js 22 LTS · pnpm 10 (`corepack enable && corepack prepare pnpm@10 --activate`) · Docker Desktop · Git.
 
-## 2. Monorepo
+## 2. Repositorios
+
+Cada aplicación tiene su propio repositorio, su propio `package.json` y su propio `.gitignore`. Se levantan por separado: backend en el puerto 3001 y frontend en el 3000.
 
 ```bash
-mkdir sira && cd sira && git init -b main
-mkdir -p apps docs
-# copiar aquí la carpeta docs/ y PROMPT-MAESTRO.md entregados
+# Backend (clon vacío de GitHub)
+git clone https://github.com/Ludwyng06/Sistema-Sira-Backend.git && cd Sistema-Sira-Backend
+# copiar aquí docs/ y PROMPT-MAESTRO.md entregados
+
+# Frontend (clon vacío de GitHub)
+git clone https://github.com/Ludwyng06/Sistema-Sira-Frontend.git && cd Sistema-Sira-Frontend
+# copiar aquí la misma docs/ y PROMPT-MAESTRO.md
 ```
 
-`pnpm-workspace.yaml`:
+**Documentación.** La carpeta `docs/` y `PROMPT-MAESTRO.md` se copian en **ambos** repositorios. La copia del **Backend manda**: si cambia un documento, se cambia primero en el Backend y se copia al Frontend el mismo día.
 
-```yaml
-packages:
-  - apps/*
-
-onlyBuiltDependencies:
-  - '@nestjs/core'
-  - '@prisma/engines'
-  - prisma
-  - argon2
-  - sharp
-  - unrs-resolver
-  - esbuild
-```
-
-`package.json` de la raíz:
-
-```json
-{
-  "name": "sira",
-  "private": true,
-  "packageManager": "pnpm@10.28.0",
-  "engines": { "node": ">=22" },
-  "scripts": {
-    "dev": "pnpm -r --parallel --filter backend --filter frontend run dev",
-    "build": "pnpm -r run build",
-    "lint": "pnpm -r run lint",
-    "test": "pnpm -r run test",
-    "db:up": "docker compose up -d",
-    "db:down": "docker compose down",
-    "db:init": "pnpm --filter backend db:init",
-    "db:migrate": "pnpm --filter backend db:migrate",
-    "db:seed": "pnpm --filter backend db:seed",
-    "db:reset": "pnpm --filter backend db:reset"
-  }
-}
-```
-
-`.gitignore` de la raíz:
+`.gitignore` del **Backend**:
 
 ```gitignore
 node_modules/
 dist/
-.next/
 coverage/
 *.log
 .env
 .env.local
 !.env.example
-apps/backend/src/generated/
+src/generated/
 .DS_Store
 .idea/
 .vscode/*
 !.vscode/extensions.json
 ```
 
+`.gitignore` del **Frontend**:
+
+```gitignore
+node_modules/
+.next/
+coverage/
+*.log
+.env
+.env.local
+!.env.example
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+```
+
+Cada repositorio lleva un `README.md` con los pasos para arrancarlo (sección 8) y un enlace al otro repositorio.
+
 ## 3. Docker Compose (servicios de desarrollo)
 
-`docker-compose.yml`:
+`docker-compose.yml` (vive en la raíz del **Backend**; el Frontend no tiene Docker):
 
 ```yaml
 name: sira
@@ -153,9 +159,10 @@ volumes:
 
 ### 4.1 Generar
 
+En la raíz del repositorio Backend:
+
 ```bash
-cd apps
-npx @nestjs/cli@12 new backend --package-manager pnpm --skip-git --strict
+npx @nestjs/cli@12 new . --package-manager pnpm --skip-git --strict
 ```
 
 > **Ojo, NestJS 12 cambió respecto a lo que suele conocer un agente:** el proyecto es **ESM** (`"type": "module"`), los imports relativos llevan extensión `.js` (`import { AppModule } from './app.module.js'`), las pruebas son con **Vitest** (no Jest), el lint es **oxlint** y TypeScript es 6.x. Borrar `app.controller.ts`, `app.service.ts`, sus specs y el `README.md` generado.
@@ -163,7 +170,6 @@ npx @nestjs/cli@12 new backend --package-manager pnpm --skip-git --strict
 ### 4.2 Dependencias
 
 ```bash
-cd backend
 pnpm add @nestjs/config @nestjs/swagger @nestjs/jwt @nestjs/passport passport passport-jwt \
   @nestjs/throttler @nestjs/schedule @nestjs/bullmq bullmq class-validator class-transformer \
   argon2 helmet @prisma/client@7.10.0 @prisma/adapter-pg@7.10.0 pg
@@ -172,12 +178,15 @@ pnpm add -D prisma@7.10.0 @types/passport-jwt @types/pg tsx dotenv
 
 > Usar **Prisma 7.10.0** fijo: la etiqueta `latest` de npm apunta hoy a una versión candidata (8.0.0-rc).
 
-Scripts a agregar en `apps/backend/package.json`:
+Scripts a agregar en el `package.json` del Backend:
 
 ```json
 "dev": "nest start --watch",
+"db:up": "docker compose up -d",
+"db:down": "docker compose down",
 "db:init": "node scripts/crear-migracion-inicial.mjs",
-"db:migrate": "prisma migrate dev",
+"db:migrate": "prisma migrate deploy",
+"db:nueva-migracion": "prisma migrate dev --create-only",
 "db:seed": "prisma db seed",
 "db:reset": "prisma migrate reset",
 "postinstall": "prisma generate"
@@ -185,9 +194,9 @@ Scripts a agregar en `apps/backend/package.json`:
 
 ### 4.3 Prisma 7
 
-Copiar `docs/architecture/anexos/schema.prisma` → `apps/backend/prisma/schema.prisma` y `anexos/restricciones.sql` → `apps/backend/prisma/sql/restricciones.sql`. **Sin modificarlos.**
+Copiar `docs/architecture/anexos/schema.prisma` → `prisma/schema.prisma` y `anexos/restricciones.sql` → `prisma/sql/restricciones.sql`. **Sin modificarlos.**
 
-En Prisma 7 la URL de la base **no** va en el esquema sino en `apps/backend/prisma.config.ts`:
+En Prisma 7 la URL de la base **no** va en el esquema sino en `prisma.config.ts`:
 
 ```ts
 import 'dotenv/config';
@@ -211,7 +220,7 @@ super({ adapter: new PrismaPg({ connectionString: config.get('DATABASE_URL') }) 
 
 ### 4.4 Migración inicial con las restricciones SQL
 
-Prisma no sabe crear la restricción de exclusión ni la columna generada `periodo`. Por eso la migración inicial se crea en dos pasos. `apps/backend/scripts/crear-migracion-inicial.mjs`:
+Prisma no sabe crear la restricción de exclusión ni la columna generada `periodo`. Por eso la migración inicial se crea en dos pasos. `scripts/crear-migracion-inicial.mjs`:
 
 ```js
 // Crea la migración inicial y le anexa prisma/sql/restricciones.sql.
@@ -222,7 +231,7 @@ import { join } from 'node:path';
 
 const dir = 'prisma/migrations';
 if (existsSync(dir) && readdirSync(dir).some((d) => !d.endsWith('.toml'))) {
-  console.error('Ya existen migraciones. Usa `pnpm db:migrate` para las siguientes.');
+  console.error('Ya existen migraciones. Usa `pnpm db:migrate` para aplicarlas o `pnpm db:nueva-migracion` para crear otra.');
   process.exit(1);
 }
 const run = (cmd) => execSync(cmd, { stdio: 'inherit' });
@@ -234,18 +243,25 @@ appendFileSync(
   '\n\n-- ===== restricciones.sql (anexado por db:init) =====\n' +
     readFileSync('prisma/sql/restricciones.sql', 'utf8'),
 );
-run('pnpm prisma migrate dev');
+// `migrate deploy` y no `migrate dev`: con la columna generada `periodo` Prisma detecta
+// una diferencia permanente (ALTER ... DROP DEFAULT) y `migrate dev` pediría crear otra migración.
+run('pnpm prisma migrate deploy');
 console.log(`Migración ${carpeta} creada con las restricciones. Súbela a git.`);
 ```
 
 Después de `pnpm db:init`, verificar en `psql` que existe la restricción:
 `SELECT conname FROM pg_constraint WHERE conname = 'sin_solapamiento';` → 1 fila.
 
-**Regla para todas las migraciones siguientes:** revisar que el `migration.sql` que genera Prisma no toque `sin_solapamiento` ni `periodo`. Si lo hace, volver a anexar `restricciones.sql` (es idempotente).
+**Por qué `db:migrate` es `prisma migrate deploy`:** con la columna generada `periodo`, Prisma detecta siempre una diferencia (`ALTER TABLE "franja_ocupada" ALTER COLUMN "periodo" DROP DEFAULT;`) que PostgreSQL no puede aplicar, y `prisma migrate dev` se quedaría esperando que le pongan nombre a una migración inútil. Por eso:
+
+- `pnpm db:migrate` **aplica** las migraciones existentes (`prisma migrate deploy`, sin preguntas). Es lo que usa quien clona.
+- `pnpm db:nueva-migracion -- --name descripcion` **crea** una migración nueva sin aplicarla (`prisma migrate dev --create-only`). Abrir el `migration.sql` generado y **borrar a mano** la sentencia `ALTER ... "periodo" DROP DEFAULT`; después aplicarla con `pnpm db:migrate`.
+
+**Regla para todas las migraciones siguientes:** revisar que el `migration.sql` que genera Prisma no toque `sin_solapamiento` ni `periodo` (salvo esa sentencia, que se borra). Si lo hace, volver a anexar `restricciones.sql` (es idempotente).
 
 ### 4.5 Variables de entorno
 
-`apps/backend/.env.example` (se versiona) y una copia `.env` (no se versiona):
+`.env.example` (se versiona) y una copia `.env` (no se versiona):
 
 ```dotenv
 NODE_ENV=development
@@ -311,7 +327,7 @@ Reglas del servicio público:
 
 Las demás carpetas de `modules/` se crean vacías, cada una con un `README.md` de una línea que copie su fila de la tabla de `03-backend.md` §1 y el responsable según `08`.
 
-### 4.8 Seed (`apps/backend/prisma/seed.ts`)
+### 4.8 Seed (`prisma/seed.ts`)
 
 Idempotente (`upsert` por código o correo). Todo dato de ejemplo se marca en la descripción con "(dato de ejemplo)" hasta tener los planos reales.
 
@@ -336,12 +352,11 @@ Idempotente (`upsert` por código o correo). Todo dato de ejemplo se marca en la
 
 ### 5.1 Generar
 
+En la raíz del repositorio Frontend:
+
 ```bash
-cd apps
-npx create-next-app@16 frontend --ts --tailwind --eslint --app --src-dir \
+npx create-next-app@16 . --ts --tailwind --eslint --app --src-dir \
   --import-alias "@/*" --use-pnpm --skip-install --disable-git --turbopack --yes
-rm frontend/pnpm-workspace.yaml   # el workspace lo maneja la raíz
-cd frontend
 pnpm add @fullcalendar/core @fullcalendar/react @fullcalendar/daygrid \
   @fullcalendar/timegrid @fullcalendar/interaction lucide-react clsx
 ```
@@ -369,55 +384,83 @@ API_URL_INTERNA=http://localhost:3001/api
 | Páginas `(publico)` | `/` (bloques de Mocoa + buscador por número de personas), `/sedes/[sede]/bloques/[bloque]` (plano + espacios por piso + filtro por tipo), `/espacios/[codigo]` (ficha). Cada una con `loading.tsx` y `error.tsx`. |
 | Páginas de lugar | `(auth)/ingresar`, `(cuenta)/mis-solicitudes`, `(panel)/panel`, cada una con "En construcción · responsable: X" según `08`, para que el mapa de rutas exista desde el día 1. |
 
-> La ruta del bloque es `/sedes/[sede]/bloques/[bloque]` (ej. `/sedes/MOC/bloques/A`) y no `/bloques/A` como dice `04` §3, porque el código del bloque solo es único dentro de una sede. Actualizar `04` en el mismo PR.
+> La ruta del bloque es `/sedes/[sede]/bloques/[bloque]` (ej. `/sedes/MOC/bloques/A`) y no `/bloques/A`, porque el código del bloque solo es único dentro de una sede. `04` §3 ya refleja esta ruta.
 
 ## 6. Verificación antes del primer commit
+
+Backend (en la raíz del repositorio Backend):
 
 ```bash
 pnpm install
 pnpm db:up
-pnpm db:init          # crea apps/backend/prisma/migrations/<fecha>_init
+pnpm db:init          # crea prisma/migrations/<fecha>_init
 pnpm db:seed
 pnpm build
 pnpm test             # aforo.spec y maquina-estados.spec deben pasar
-pnpm dev              # revisar los criterios de la Fase 0
+pnpm dev              # http://localhost:3001/docs y /api/salud
+```
+
+Frontend (en la raíz del repositorio Frontend, con el backend arriba):
+
+```bash
+pnpm install
+pnpm build
+pnpm lint
+pnpm dev              # http://localhost:3000 — revisar los criterios de la Fase 0
 ```
 
 ## 7. Git y GitHub
 
+Flujo de ramas: `main` + `develop`. El primer commit de la base de cada repositorio va a `main`; `develop` nace de `main`.
+
 ```bash
+# En cada repositorio (Backend y Frontend)
 git add .
-git commit -m "chore: base del monorepo SIRA (backend, frontend, docker, esquema y documentación)"
-gh repo create <usuario-u-organizacion>/sira --private --source . --push
-gh repo edit --add-topic nestjs,nextjs,postgresql,prisma
+git commit -m "chore: base inicial de SIRA y documentación"
+git push -u origin main
+git switch -c develop
+git push -u origin develop
 ```
 
-Después, en GitHub (lo hace Jensen):
+Después, en GitHub, en **cada** repositorio (lo hace Jensen):
 
 1. **Settings → Collaborators:** invitar a Isabel Cerón y Kevin Guerrero.
-2. **Settings → Branches → Add rule** para `main`: exigir pull request con 1 aprobación y que la rama esté al día.
-3. Crear las etiquetas `backend`, `frontend`, `base-de-datos`, `documentacion`, `bug`.
-4. Crear un *issue* por cada fila de los días de `08-plan-de-trabajo-20-dias.md`, asignado a su responsable (Orca puede hacerlo con `gh issue create`).
+2. **Settings → Branches:** dejar `develop` como rama por defecto.
+3. **Settings → Branches → Add rule** para `main` **y** para `develop`: exigir pull request con 1 aprobación y que la rama esté al día.
+4. Crear las etiquetas `backend`, `frontend`, `base-de-datos`, `documentacion`, `bug`.
+5. Crear un *issue* por cada fila de los días de `08-plan-de-trabajo-20-dias.md`, asignado a su responsable y en el repositorio que corresponda (Orca puede hacerlo con `gh issue create`).
 
 Convenciones (detalle en `08` §2):
-- Ramas `feat/<modulo>-<tarea>`, `fix/...`, `docs/...`. Nunca se trabaja directo en `main`.
+- Nadie trabaja directo en `main` ni en `develop`. Las ramas de trabajo salen de `develop`: `feat/<modulo>-<tarea>`, `fix/...`, `docs/...`.
+- El pull request va hacia `develop`. `develop` → `main` solo para entregas (por ejemplo, la demo del 1 de noviembre) y también por pull request.
 - Commits en español con Conventional Commits: `feat: carga de fotos de espacios`.
 - PR pequeño (máximo dos días de vida), con la descripción de qué cambia y cómo probarlo.
 - Solo una persona a la vez cambia `schema.prisma`, y avisa en el grupo.
-- Opcional: GitHub Actions con `pnpm install && pnpm build && pnpm test` en cada PR.
+- Un cambio de documentación se hace primero en `docs/` del Backend y se copia al Frontend el mismo día.
+- Opcional: GitHub Actions con `pnpm install && pnpm build && pnpm test` en cada PR (en el Frontend, `pnpm lint` en lugar de `pnpm test`).
 
-## 8. README de la raíz (contenido mínimo)
+## 8. README de cada repositorio (contenido mínimo)
 
-1. Qué es SIRA (dos líneas) y enlace a `docs/architecture/01-project-vision.md`.
+1. Qué es SIRA (dos líneas), enlace a `docs/architecture/01-project-vision.md` y enlace al **otro** repositorio.
 2. Requisitos (sección 1).
-3. Arranque:
+3. Arranque.
+
+   Backend:
    ```bash
    pnpm install
-   cp apps/backend/.env.example apps/backend/.env
-   cp apps/frontend/.env.example apps/frontend/.env.local
-   pnpm db:up && pnpm db:migrate && pnpm db:seed
+   cp .env.example .env
+   pnpm db:up
+   pnpm db:init      # solo quien crea el repositorio; los demás usan: pnpm db:migrate
+   pnpm db:seed
    pnpm dev
    ```
-   (Los integrantes que clonan usan `db:migrate`, que aplica la migración ya subida; `db:init` es solo para quien crea el repositorio).
+
+   Frontend (con el backend arriba):
+   ```bash
+   pnpm install
+   cp .env.example .env.local
+   pnpm dev
+   ```
+
 4. URLs y puertos (`05` §2) y usuarios de prueba (sección 4.8).
-5. Mapa de la documentación y enlace al plan de trabajo.
+5. Mapa de la documentación y enlace al plan de trabajo; indicar que la copia de `docs/` del Backend es la fuente de verdad.

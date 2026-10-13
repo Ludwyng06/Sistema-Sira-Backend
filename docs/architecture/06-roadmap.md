@@ -40,4 +40,4 @@ Mapa de calor de ocupación, depreciación de elementos, paquetes preconfigurado
 | 20 días es poco para tres personas aprendiendo NestJS 12 y Next 16. | El módulo `inventario` se construye primero (Fase 0 de `09`) como ejemplo para copiar. Alcance del avance sin pasarela. Reparto por módulos de punta a punta para no esperarse entre sí. |
 | Los planos y la numeración de los salones no llegan a tiempo. | El seed trae datos de ejemplo con la estructura correcta; cargar los reales es solo cambiar datos. Pedirlos a Vicerrectoría el primer día. |
 | Diferencias con el documento del director. | Todo cambio queda en `07-cambios-documento-base.md` para revisarlo con él en la primera semana, no el día de la entrega. |
-| Integración de último momento. | Integración continua: se fusiona a `main` todos los días, y el jueves de cada semana hay demo interna del recorrido. |
+| Integración de último momento. | Integración continua: se fusiona a `develop` todos los días, y el jueves de cada semana hay demo interna del recorrido con `develop`. |

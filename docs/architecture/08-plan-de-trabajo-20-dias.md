@@ -8,7 +8,7 @@ Por **módulo de punta a punta**: cada persona hace el backend **y** el frontend
 
 | Integrante | Rol en el equipo | Semana 1 | Semana 2 | Semana 3 |
 |---|---|---|---|---|
-| **Jensen Ordóñez** | Líder técnico: integra, revisa PR, mantiene `main` funcionando | Identidad (registro, verificación, login, roles, guardas) + configuración + bitácora | Aprobaciones (aval, aprobación, devolución, reclasificación) + motor de tarifas | Cotización en PDF + pagos por consignación + verificación de tesorería |
+| **Jensen Ordóñez** | Líder técnico: integra, revisa PR, mantiene `develop` funcionando | Identidad (registro, verificación, login, roles, guardas) + configuración + bitácora | Aprobaciones (aval, aprobación, devolución, reclasificación) + motor de tarifas | Cotización en PDF + pagos por consignación + verificación de tesorería |
 | **Isabel Cerón** | Dueña de la experiencia visual | Inventario completo (lo público lo deja Orca como ejemplo en la Fase 0 → completar CRUD de administración) + portal público por bloques + ficha del espacio | Asistente de solicitud (6 pasos) en el frontend | Actas de entrega y devolución + tablero de indicadores + pasada de accesibilidad |
 | **Kevin Guerrero** | Dueño de la lógica de reservas | Disponibilidad: franjas, bloqueos, `GET /disponibilidad`, componente de calendario | Solicitudes en el backend: borrador, ítems, envío con retención (UC-01), máquina de estados | Vencimientos y recordatorios (jobs), correos, "Mis solicitudes", prueba de carrera |
 
@@ -16,27 +16,27 @@ Por **módulo de punta a punta**: cada persona hace el backend **y** el frontend
 
 ## 2. Reglas de trabajo en equipo
 
-- **Ramas:** `main` siempre funciona. Cada tarea en una rama `feat/<modulo>-<tarea>` (ej. `feat/inventario-fotos`). PR pequeño, máximo dos días de vida.
+- **Ramas:** flujo `main` + `develop`. Nadie trabaja directo en `main` ni en `develop`; `develop` siempre funciona. Cada tarea en una rama que sale de `develop`: `feat/<modulo>-<tarea>` (ej. `feat/inventario-fotos`), `fix/...` o `docs/...`. PR pequeño hacia `develop`, máximo dos días de vida. `develop` → `main` solo para entregas (por ejemplo, la demo del 1 de noviembre) y por PR.
 - **Revisión:** todo PR lo aprueba alguien más. Jensen revisa los que tocan `schema.prisma` o `shared/`.
 - **Cambios al esquema:** solo una persona a la vez modifica `schema.prisma` (se avisa en el grupo). Si dos migraciones chocan, gana la que se fusionó primero y la otra se regenera.
 - **Commits:** en español con prefijo: `feat: carga de fotos de espacios`, `fix: aforo en la búsqueda inversa`, `docs: ...`.
 - **Daily de 10 minutos** (WhatsApp o llamada): qué hice, qué haré, en qué estoy trabado.
-- **Jueves de demo interna:** cada jueves se recorre el flujo completo en la máquina de alguien con `main` limpio. Lo que no funcione ahí no está terminado.
+- **Jueves de demo interna:** cada jueves se recorre el flujo completo en la máquina de alguien con `develop` limpio. Lo que no funcione ahí no está terminado.
 - **Definición de terminado de una tarea:** endpoint con DTO validado y documentado en Swagger · regla de negocio con prueba unitaria · pantalla con sus cinco estados (cargando, vacío, datos, error, sin permiso) · funciona en 360 px · se puede usar con teclado.
 
 ## 3. Día a día
 
 ### Día 0 · Lunes 12 y martes 13 en la mañana · Jensen con Orca
 
-- [ ] Ejecutar con Orca la **Fase 0** de `09-inicializacion-y-git.md`: monorepo, backend, frontend, Docker, esquema, seed y módulo de inventario de ejemplo.
-- [ ] Crear el repositorio en GitHub, subir la base y dar acceso a Isabel y Kevin.
-- [ ] Proteger `main` (PR obligatorio, 1 aprobación).
+- [ ] Ejecutar con Orca la **Fase 0** de `09-inicializacion-y-git.md`: los dos repositorios (backend y frontend), Docker, esquema, seed y módulo de inventario de ejemplo.
+- [ ] Subir la base de cada repositorio a `main` y crear `develop` desde `main` (`develop` queda como rama por defecto); dar acceso a Isabel y Kevin.
+- [ ] Proteger `main` y `develop` (PR obligatorio, 1 aprobación).
 - [ ] Compartir el documento `07-cambios-documento-base.md` con el director para revisarlo esta semana.
 
 ### Semana 1 · Base e inventario (13 – 18 oct.)
 
 **Martes 13 · Todos**
-- [ ] Cada uno clona, corre `pnpm install`, `pnpm db:up`, `pnpm db:init` (solo uno, y sube la migración), `pnpm db:seed`, `pnpm dev`. Todos deben ver el portal con los bloques de ejemplo y Swagger en `/docs`.
+- [ ] Cada uno clona, corre `pnpm install`, `pnpm db:up`, `pnpm db:init` (solo uno, y sube la migración), `pnpm db:seed`, `pnpm dev`. Cada uno clona los dos repositorios (backend y frontend) y los levanta por separado. Todos deben ver el portal con los bloques de ejemplo y Swagger en `/docs`.
 - [ ] Leer `01` a `04` y el módulo `inventario` que dejó la Fase 0 (es el ejemplo de cómo se escribe todo).
 - [ ] Pedir a Vicerrectoría: planos, listado de espacios con capacidad, días de anticipación, quién aprueba (preguntas de `07` §D).
 
