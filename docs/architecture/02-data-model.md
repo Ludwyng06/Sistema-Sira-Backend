@@ -210,9 +210,9 @@ Cada transición:
 ## 6. Cómo se crea la base de datos
 
 ```bash
-pnpm db:up        # PostgreSQL, Redis y Mailpit en Docker (MinIO queda bajo el profile `almacenamiento`)
-pnpm db:init      # SOLO la primera vez: crea la migración inicial y le anexa restricciones.sql
-pnpm db:seed      # Sede Mocoa, bloques A/B/C, tipos, espacios de ejemplo, usuarios de prueba
+npm run db:up        # PostgreSQL, Redis y Mailpit en Docker (MinIO queda bajo el profile `almacenamiento`)
+npm run db:init      # SOLO la primera vez: crea la migración inicial y le anexa restricciones.sql
+npm run db:seed      # Sede Mocoa, bloques A/B/C, tipos, espacios de ejemplo, usuarios de prueba
 ```
 
-Para aplicar las migraciones que ya están en el repositorio: `pnpm db:migrate` (`prisma migrate deploy`). Después de cualquier cambio a `schema.prisma`: `pnpm db:nueva-migracion -- --name descripcion_del_cambio` (`prisma migrate dev --create-only`), que **crea** la migración sin aplicarla. Prisma detecta siempre un drift sobre la columna generada `periodo` (`ALTER TABLE "franja_ocupada" ALTER COLUMN "periodo" DROP DEFAULT;`) que PostgreSQL no puede aplicar: hay que **borrar a mano** esa sentencia del `migration.sql` y luego aplicarlo con `pnpm db:migrate`. **En la revisión del PR, verificar que el `migration.sql` generado NO incluya `DROP CONSTRAINT sin_solapamiento` ni otros cambios sobre `periodo`.** Prisma no conoce esas piezas; si alguna vez las toca, se vuelve a anexar `restricciones.sql` (es idempotente).
+Para aplicar las migraciones que ya están en el repositorio: `npm run db:migrate` (`prisma migrate deploy`). Después de cualquier cambio a `schema.prisma`: `npm run db:nueva-migracion -- --name descripcion_del_cambio` (`prisma migrate dev --create-only`), que **crea** la migración sin aplicarla. Prisma detecta siempre un drift sobre la columna generada `periodo` (`ALTER TABLE "franja_ocupada" ALTER COLUMN "periodo" DROP DEFAULT;`) que PostgreSQL no puede aplicar: hay que **borrar a mano** esa sentencia del `migration.sql` y luego aplicarlo con `npm run db:migrate`. **En la revisión del PR, verificar que el `migration.sql` generado NO incluya `DROP CONSTRAINT sin_solapamiento` ni otros cambios sobre `periodo`.** Prisma no conoce esas piezas; si alguna vez las toca, se vuelve a anexar `restricciones.sql` (es idempotente).

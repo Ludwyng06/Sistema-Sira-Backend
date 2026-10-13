@@ -30,7 +30,7 @@ Los anexos ya están probados y se copian **tal cual**, no se reescriben:
 
 | Capa | Tecnología |
 |---|---|
-| Repositorios | Dos repositorios independientes (Backend y Frontend), pnpm 10, Node 22 |
+| Repositorios | Dos repositorios independientes (Backend y Frontend), npm, Node 22.22.3 o superior |
 | Backend | NestJS 12 (módulos ES: imports relativos con extensión `.js`), TypeScript, class-validator, @nestjs/swagger, @nestjs/jwt + passport-jwt, @nestjs/throttler, @nestjs/schedule, BullMQ |
 | BD | PostgreSQL 16 + Prisma 7.10 con `@prisma/adapter-pg`; cliente generado en `src/generated/prisma` |
 | Frontend | Next.js 16 App Router, React 19, Tailwind CSS 4, FullCalendar 6, lucide-react |
@@ -80,7 +80,7 @@ Lista completa en `docs/architecture/03-backend.md` §3. Las que nunca se rompen
 - **Frontend:** Server Components para lo público; Client Components solo para lo interactivo. Todo fetch por `src/lib/api.ts`. Toda pantalla con sus cinco estados. Colores solo por tokens de `globals.css`. Estado del calendario nunca solo con color.
 - **Variables de entorno:** `.env` (no versionado) a partir de `.env.example`. Toda variable nueva se agrega al `.env.example` y a la validación de `shared/config`.
 - **Commits:** español, Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
-- **Migraciones:** `pnpm db:migrate --name <descripcion>`. Revisa que el SQL generado no toque `sin_solapamiento` ni `periodo`.
+- **Migraciones:** `npm run db:nueva-migracion -- --name <descripcion>` y `npm run db:migrate` para aplicarlas. Revisa que el SQL generado no toque `sin_solapamiento` ni `periodo` (borra a mano `ALTER COLUMN periodo DROP DEFAULT`; ver `02` §6).
 
 ## Cómo quiero trabajar
 
@@ -93,7 +93,7 @@ Lista completa en `docs/architecture/03-backend.md` §3. Las que nunca se rompen
 
 ## Criterio de terminado
 
-- `pnpm build` y `pnpm test` pasan en la raíz.
+- Backend: `npm run build` y `npm run test` pasan. Frontend: `npm run build` y `npm run lint` pasan.
 - El endpoint aparece en Swagger con sus DTO y respuestas de error.
 - Cada regla de negocio nueva tiene prueba unitaria; las de concurrencia, prueba contra PostgreSQL real.
 - La pantalla tiene los cinco estados, funciona a 360 px, se usa con teclado y pasa axe sin errores.
@@ -101,7 +101,7 @@ Lista completa en `docs/architecture/03-backend.md` §3. Las que nunca se rompen
 
 ## Decisiones ya tomadas (no reabrir)
 
-- **Dos repositorios, uno por aplicación (Backend y Frontend), con pnpm**: decisión del equipo.
+- **Dos repositorios, uno por aplicación (Backend y Frontend), con npm**: decisión del equipo.
 - **Tabla única de ocupación** con restricción de exclusión: es lo que hace imposible la doble reserva contra clases y mantenimientos.
 - **Pesos enteros** en vez de centavos: COP no tiene decimales; ×100 solo en el adaptador de pasarela.
 - **Pago por consignación primero**, pasarela después: así funciona hoy y no depende del convenio.

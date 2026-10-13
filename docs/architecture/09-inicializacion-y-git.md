@@ -41,15 +41,16 @@ Sistema-Sira-Frontend/
 ```
 
 **Criterio de terminado de la Fase 0:**
-- [ ] **Backend:** `pnpm install && pnpm db:up && pnpm db:init && pnpm db:seed && pnpm dev` funciona en una máquina limpia.
+- [ ] **Backend:** `npm install && npm run db:up && npm run db:init && npm run db:seed && npm run dev` (o `npm run start`) funciona en una máquina limpia.
 - [ ] **Backend:** `http://localhost:3001/docs` muestra Swagger con los endpoints de inventario y `/api/salud` responde `ok`.
 - [ ] **Frontend:** con el backend arriba, `http://localhost:3000` muestra la sede Mocoa con los bloques A, B y C; al entrar a un bloque se ven sus espacios por piso con aforo; la ficha de un espacio muestra fotos (o un marcador), dotación y tarifas.
-- [ ] En cada repositorio, `pnpm build` pasa; en el Backend, `pnpm test` también (incluye los `.spec.ts` de los anexos).
+- [ ] **Backend:** `npm run build` y `npm run test` pasan (incluye los `.spec.ts` de los anexos).
+- [ ] **Frontend:** `npm run build` y `npm run lint` pasan.
 - [ ] Todo está en GitHub: base en `main`, `develop` creada desde `main`, y ambas protegidas.
 
 ## 1. Requisitos de la máquina
 
-Node.js 22 LTS · pnpm 10 (`corepack enable && corepack prepare pnpm@10 --activate`) · Docker Desktop · Git.
+Node.js 22.22.3 o superior (22 LTS) · npm (viene con Node) · Docker Desktop · Git.
 
 ## 2. Repositorios
 
@@ -162,7 +163,7 @@ volumes:
 En la raíz del repositorio Backend:
 
 ```bash
-npx @nestjs/cli@12 new . --package-manager pnpm --skip-git --strict
+npx @nestjs/cli@12 new . --package-manager npm --skip-git --strict
 ```
 
 > **Ojo, NestJS 12 cambió respecto a lo que suele conocer un agente:** el proyecto es **ESM** (`"type": "module"`), los imports relativos llevan extensión `.js` (`import { AppModule } from './app.module.js'`), las pruebas son con **Vitest** (no Jest), el lint es **oxlint** y TypeScript es 6.x. Borrar `app.controller.ts`, `app.service.ts`, sus specs y el `README.md` generado.
@@ -170,10 +171,10 @@ npx @nestjs/cli@12 new . --package-manager pnpm --skip-git --strict
 ### 4.2 Dependencias
 
 ```bash
-pnpm add @nestjs/config @nestjs/swagger @nestjs/jwt @nestjs/passport passport passport-jwt \
+npm install @nestjs/config @nestjs/swagger @nestjs/jwt @nestjs/passport passport passport-jwt \
   @nestjs/throttler @nestjs/schedule @nestjs/bullmq bullmq class-validator class-transformer \
   argon2 helmet @prisma/client@7.10.0 @prisma/adapter-pg@7.10.0 pg
-pnpm add -D prisma@7.10.0 @types/passport-jwt @types/pg tsx dotenv
+npm install -D prisma@7.10.0 @types/passport-jwt @types/pg tsx dotenv
 ```
 
 > Usar **Prisma 7.10.0** fijo: la etiqueta `latest` de npm apunta hoy a una versión candidata (8.0.0-rc).
@@ -181,7 +182,9 @@ pnpm add -D prisma@7.10.0 @types/passport-jwt @types/pg tsx dotenv
 Scripts a agregar en el `package.json` del Backend:
 
 ```json
+"start": "nest start",
 "dev": "nest start --watch",
+"start:prod": "node dist/main",
 "db:up": "docker compose up -d",
 "db:down": "docker compose down",
 "db:init": "node scripts/crear-migracion-inicial.mjs",
@@ -231,12 +234,12 @@ import { join } from 'node:path';
 
 const dir = 'prisma/migrations';
 if (existsSync(dir) && readdirSync(dir).some((d) => !d.endsWith('.toml'))) {
-  console.error('Ya existen migraciones. Usa `pnpm db:migrate` para aplicarlas o `pnpm db:nueva-migracion` para crear otra.');
+  console.error('Ya existen migraciones. Usa `npm run db:migrate` para aplicarlas o `npm run db:nueva-migracion` para crear otra.');
   process.exit(1);
 }
 const run = (cmd) => execSync(cmd, { stdio: 'inherit' });
 
-run('pnpm prisma migrate dev --create-only --name init');
+run('npx prisma migrate dev --create-only --name init');
 const carpeta = readdirSync(dir).find((d) => d.endsWith('_init'));
 appendFileSync(
   join(dir, carpeta, 'migration.sql'),
@@ -245,17 +248,17 @@ appendFileSync(
 );
 // `migrate deploy` y no `migrate dev`: con la columna generada `periodo` Prisma detecta
 // una diferencia permanente (ALTER ... DROP DEFAULT) y `migrate dev` pediría crear otra migración.
-run('pnpm prisma migrate deploy');
+run('npx prisma migrate deploy');
 console.log(`Migración ${carpeta} creada con las restricciones. Súbela a git.`);
 ```
 
-Después de `pnpm db:init`, verificar en `psql` que existe la restricción:
+Después de `npm run db:init`, verificar en `psql` que existe la restricción:
 `SELECT conname FROM pg_constraint WHERE conname = 'sin_solapamiento';` → 1 fila.
 
 **Por qué `db:migrate` es `prisma migrate deploy`:** con la columna generada `periodo`, Prisma detecta siempre una diferencia (`ALTER TABLE "franja_ocupada" ALTER COLUMN "periodo" DROP DEFAULT;`) que PostgreSQL no puede aplicar, y `prisma migrate dev` se quedaría esperando que le pongan nombre a una migración inútil. Por eso:
 
-- `pnpm db:migrate` **aplica** las migraciones existentes (`prisma migrate deploy`, sin preguntas). Es lo que usa quien clona.
-- `pnpm db:nueva-migracion -- --name descripcion` **crea** una migración nueva sin aplicarla (`prisma migrate dev --create-only`). Abrir el `migration.sql` generado y **borrar a mano** la sentencia `ALTER ... "periodo" DROP DEFAULT`; después aplicarla con `pnpm db:migrate`.
+- `npm run db:migrate` **aplica** las migraciones existentes (`prisma migrate deploy`, sin preguntas). Es lo que usa quien clona.
+- `npm run db:nueva-migracion -- --name descripcion` **crea** una migración nueva sin aplicarla (`prisma migrate dev --create-only`). Abrir el `migration.sql` generado y **borrar a mano** la sentencia `ALTER ... "periodo" DROP DEFAULT`; después aplicarla con `npm run db:migrate`.
 
 **Regla para todas las migraciones siguientes:** revisar que el `migration.sql` que genera Prisma no toque `sin_solapamiento` ni `periodo` (salvo esa sentencia, que se borra). Si lo hace, volver a anexar `restricciones.sql` (es idempotente).
 
@@ -356,14 +359,14 @@ En la raíz del repositorio Frontend:
 
 ```bash
 npx create-next-app@16 . --ts --tailwind --eslint --app --src-dir \
-  --import-alias "@/*" --use-pnpm --skip-install --disable-git --turbopack --yes
-pnpm add @fullcalendar/core @fullcalendar/react @fullcalendar/daygrid \
-  @fullcalendar/timegrid @fullcalendar/interaction lucide-react clsx
+  --import-alias "@/*" --use-npm --disable-git --turbopack --yes
+npm install @fullcalendar/core@6.1.21 @fullcalendar/react@6.1.21 @fullcalendar/daygrid@6.1.21 \
+  @fullcalendar/timegrid@6.1.21 @fullcalendar/interaction@6.1.21 lucide-react clsx
 ```
 
 > **Ojo, Next.js 16:** el generador deja `cacheComponents: true` en `next.config.ts` y un `AGENTS.md` que exige leer `node_modules/next/dist/docs/` antes de escribir código, porque varias API cambiaron. Hacerle caso. Las páginas públicas consultan la API en el servidor; con `cacheComponents` los datos dinámicos van dentro de `<Suspense>` o en funciones con `'use cache'` según indique esa guía.
 
-Script `dev` con puerto fijo: `"dev": "next dev --port 3000"`. `.env.example` del frontend:
+Scripts del frontend (puerto fijo 3000): `"start": "next dev --port 3000"` (servidor de desarrollo), `"build": "next build"`, `"start:prod": "next start --port 3000"` y `"lint"`. Sin archivos de workspace ni campo `packageManager`; se versiona `package-lock.json`. `.env.example` del frontend:
 
 ```dotenv
 NEXT_PUBLIC_API_URL=http://localhost:3001/api
@@ -391,22 +394,22 @@ API_URL_INTERNA=http://localhost:3001/api
 Backend (en la raíz del repositorio Backend):
 
 ```bash
-pnpm install
-pnpm db:up
-pnpm db:init          # crea prisma/migrations/<fecha>_init
-pnpm db:seed
-pnpm build
-pnpm test             # aforo.spec y maquina-estados.spec deben pasar
-pnpm dev              # http://localhost:3001/docs y /api/salud
+npm install
+npm run db:up
+npm run db:init          # crea prisma/migrations/<fecha>_init
+npm run db:seed
+npm run build
+npm run test             # aforo.spec y maquina-estados.spec deben pasar
+npm run dev              # (o npm run start) http://localhost:3001/docs y /api/salud
 ```
 
 Frontend (en la raíz del repositorio Frontend, con el backend arriba):
 
 ```bash
-pnpm install
-pnpm build
-pnpm lint
-pnpm dev              # http://localhost:3000 — revisar los criterios de la Fase 0
+npm install
+npm run build
+npm run lint
+npm run start            # http://localhost:3000 — revisar los criterios de la Fase 0
 ```
 
 ## 7. Git y GitHub
@@ -437,7 +440,7 @@ Convenciones (detalle en `08` §2):
 - PR pequeño (máximo dos días de vida), con la descripción de qué cambia y cómo probarlo.
 - Solo una persona a la vez cambia `schema.prisma`, y avisa en el grupo.
 - Un cambio de documentación se hace primero en `docs/` del Backend y se copia al Frontend el mismo día.
-- Opcional: GitHub Actions con `pnpm install && pnpm build && pnpm test` en cada PR (en el Frontend, `pnpm lint` en lugar de `pnpm test`).
+- Opcional: GitHub Actions con `npm install && npm run build && npm run test` en cada PR (en el Frontend, `npm run lint` en lugar de `npm run test`).
 
 ## 8. README de cada repositorio (contenido mínimo)
 
@@ -447,19 +450,19 @@ Convenciones (detalle en `08` §2):
 
    Backend:
    ```bash
-   pnpm install
+   npm install
    cp .env.example .env
-   pnpm db:up
-   pnpm db:init      # solo quien crea el repositorio; los demás usan: pnpm db:migrate
-   pnpm db:seed
-   pnpm dev
+   npm run db:up
+   npm run db:init      # solo quien crea el repositorio; los demás usan: npm run db:migrate
+   npm run db:seed
+   npm run dev          # o npm run start
    ```
 
    Frontend (con el backend arriba):
    ```bash
-   pnpm install
+   npm install
    cp .env.example .env.local
-   pnpm dev
+   npm run start
    ```
 
 4. URLs y puertos (`05` §2) y usuarios de prueba (sección 4.8).

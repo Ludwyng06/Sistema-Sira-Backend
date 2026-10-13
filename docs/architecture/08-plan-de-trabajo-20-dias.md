@@ -36,7 +36,7 @@ Por **módulo de punta a punta**: cada persona hace el backend **y** el frontend
 ### Semana 1 · Base e inventario (13 – 18 oct.)
 
 **Martes 13 · Todos**
-- [ ] Cada uno clona, corre `pnpm install`, `pnpm db:up`, `pnpm db:init` (solo uno, y sube la migración), `pnpm db:seed`, `pnpm dev`. Cada uno clona los dos repositorios (backend y frontend) y los levanta por separado. Todos deben ver el portal con los bloques de ejemplo y Swagger en `/docs`.
+- [ ] Cada uno clona los dos repositorios y los levanta por separado. **Backend:** `npm install`, `cp .env.example .env`, `npm run db:up`, `npm run db:init` (solo uno, y sube la migración; los demás usan `npm run db:migrate`), `npm run db:seed`, `npm run dev`. **Frontend:** `npm install`, `cp .env.example .env.local`, `npm run start`. Todos deben ver el portal con los bloques de ejemplo y Swagger en `/docs`.
 - [ ] Leer `01` a `04` y el módulo `inventario` que dejó la Fase 0 (es el ejemplo de cómo se escribe todo).
 - [ ] Pedir a Vicerrectoría: planos, listado de espacios con capacidad, días de anticipación, quién aprueba (preguntas de `07` §D).
 

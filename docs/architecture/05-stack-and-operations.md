@@ -8,7 +8,7 @@ Se respeta el stack del documento base. Las versiones se actualizan a las establ
 |---|---|---|---|
 | Lenguaje | TypeScript | 5.x (front) · 6.x (back) | Un solo lenguaje en todo el proyecto. |
 | Runtime | Node.js | 22 LTS | LTS vigente; lo exigen Next 16 y Nest 12. |
-| Gestor de paquetes | pnpm | 10.x | Cada aplicación es su propio repositorio, con su `install`. Más rápido y estricto que npm. |
+| Gestor de paquetes | npm | El que trae Node 22 | Cada aplicación es su propio repositorio, con su `package-lock.json` versionado. |
 | Frontend | Next.js (App Router) + React | 16.4 · 19 | ⚠️ El doc dice Next 15; la 16 es la estable actual y no cambia nada del diseño. |
 | Estilos | Tailwind CSS | 4 | Tokens de la marca como variables CSS. |
 | Calendario UI | FullCalendar | 6 | Mes, semana, día y línea de tiempo ya resueltos. ⚠️ La vista de línea de tiempo con recursos (RF-CAL-10) es de la edición premium de FullCalendar; para el avance se construye con la vista de semana o con un componente propio. |
@@ -33,7 +33,7 @@ Se respeta el stack del documento base. Las versiones se actualizan a las establ
 Lo que cambió respecto a la receta original de `09` al ejecutarla:
 
 - **Node.js mínimo real 22.22.3.** El CLI de NestJS 12 falla con `ERR_REQUIRE_CYCLE_MODULE` en versiones anteriores de Node 22.
-- **MinIO.** Las imágenes `minio/minio` y `minio/mc` ya no existen en Docker Hub: los servicios quedan bajo el profile `almacenamiento` del `docker-compose.yml` y `pnpm db:up` no los levanta. ⚠️ Falta elegir una imagen antes de la tarea de fotos.
+- **MinIO.** Las imágenes `minio/minio` y `minio/mc` ya no existen en Docker Hub: los servicios quedan bajo el profile `almacenamiento` del `docker-compose.yml` y `npm run db:up` no los levanta. ⚠️ Falta elegir una imagen antes de la tarea de fotos.
 - **Migraciones.** Prisma detecta un drift permanente sobre la columna generada `periodo` (`ALTER COLUMN periodo DROP DEFAULT`). Por eso `db:migrate` = `prisma migrate deploy` y las migraciones nuevas se crean con `db:nueva-migracion` (`prisma migrate dev --create-only`), borrando a mano esa sentencia (ver `02` §6).
 - **Versiones reales instaladas.** Backend: NestJS core 12.1.3, CLI 12.0.8, Prisma 7.10.0, TypeScript 6.0.3, Vitest 4.1.11. Frontend: Next 16.4.0, React 19.3.0, Tailwind 4.3.3, FullCalendar 6.1.21 (fijado: el gestor de paquetes instalaba `@fullcalendar/react` 7 con `@fullcalendar/core` 6).
 
