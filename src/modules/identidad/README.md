@@ -2,6 +2,6 @@
 
 registro, login, verificación, roles, sesiones
 
-Responsable: Jensen Ordóñez (identidad, roles y guardas; semana 1 del plan 08)
+Responsable: Isabel Cerón
 
-Estado: sin código (Fase 0). Se construye siguiendo el plan `docs/architecture/08-plan-de-trabajo-20-dias.md` y la estructura de `modules/inventario`.
+Estado: contrato publicado en Swagger (`/docs`, etiqueta «Identidad»): los nueve endpoints de `/api/auth/*` ya validan la entrada y documentan sus errores, pero el servicio responde 501 `NO_IMPLEMENTADO`. La implementación de la lógica de negocio está pendiente. Se construye siguiendo el plan `docs/architecture/08-plan-de-trabajo-20-dias.md` y la estructura de `modules/inventario`.

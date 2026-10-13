@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { PassportModule } from '@nestjs/passport';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { IdentidadModule } from './modules/identidad/identidad.module.js';
 import { InventarioModule } from './modules/inventario/inventario.module.js';
 import { SaludController } from './salud.controller.js';
 import { JwtAuthGuard, RolesGuard } from './shared/auth/guardas.js';
@@ -19,6 +20,7 @@ import { SharedModule } from './shared/shared.module.js';
     PassportModule,
     PrismaModule,
     SharedModule,
+    IdentidadModule,
     InventarioModule,
   ],
   controllers: [SaludController],
