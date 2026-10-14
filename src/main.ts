@@ -44,6 +44,7 @@ async function bootstrap() {
     .setDescription('Sistema de Inventario y Reserva de Activos · Uniputumayo')
     .setVersion('0.1.0')
     .addBearerAuth()
+    .addCookieAuth('sira_refresh', undefined, 'sira_refresh')
     .build();
   SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, documento));
 
