@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, Ip, Post } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
   ApiBearerAuth,
@@ -34,12 +34,18 @@ export class AuthController {
     description:
       'Exige aceptar la política de datos. Si el dominio del correo es institucional, el servidor asigna ' +
       'el perfil INTERNO sin importar el tipo enviado. Se envía un código de 6 dígitos al correo, ' +
-      'válido 15 minutos y con máximo 5 intentos. Sin correo verificado no se pueden enviar solicitudes.',
+      'válido 15 minutos y con máximo 5 intentos. Sin correo verificado no se pueden enviar solicitudes.\n\n' +
+      'Errores: 404 DEPENDENCIA_NO_ENCONTRADA; 409 CORREO_REGISTRADO o DOCUMENTO_REGISTRADO; ' +
+      '422 POLITICA_DESACTUALIZADA o TIPO_SOLICITANTE_INVALIDO.',
   })
   @ApiCreatedResponse({ type: RegistroRespuestaDto })
-  @ApiErrores(400, 409, 429, 501)
-  registrar(@Body() datos: RegistroDto): Promise<RegistroRespuestaDto> {
-    return this.servicio.registrar(datos);
+  @ApiErrores(400, 404, 409, 422, 429)
+  registrar(
+    @Body() datos: RegistroDto,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent: string | undefined,
+  ): Promise<RegistroRespuestaDto> {
+    return this.servicio.registrar(datos, { ip, userAgent: userAgent ?? null });
   }
 
   @Publico()
@@ -49,10 +55,11 @@ export class AuthController {
     summary: 'Verifica el correo con el código recibido.',
     description:
       'El código tiene 6 dígitos, es válido 15 minutos y admite máximo 5 intentos. ' +
-      'Sin correo verificado no se pueden enviar solicitudes.',
+      'Sin correo verificado no se pueden enviar solicitudes.\n\n' +
+      'Errores: 422 CODIGO_INVALIDO, CODIGO_VENCIDO o CODIGO_AGOTADO.',
   })
   @ApiOkResponse({ type: MensajeDto })
-  @ApiErrores(400, 422, 429, 501)
+  @ApiErrores(400, 422, 429)
   verificarCorreo(@Body() datos: VerificarCorreoDto): Promise<MensajeDto> {
     return this.servicio.verificarCorreo(datos);
   }
@@ -64,10 +71,11 @@ export class AuthController {
   @ApiOperation({
     summary: 'Reenvía el código de verificación.',
     description:
-      'Límite de 5 peticiones por minuto. El nuevo código tiene 6 dígitos y es válido 15 minutos.',
+      'Límite de 5 peticiones por minuto. El nuevo código tiene 6 dígitos y es válido 15 minutos.\n\n' +
+      'Errores: 429 CODIGO_RECIENTE (o límite de peticiones por IP); 503 CORREO_NO_ENVIADO.',
   })
   @ApiOkResponse({ type: MensajeDto })
-  @ApiErrores(400, 429, 501)
+  @ApiErrores(400, 429, 503)
   reenviarCodigo(@Body() datos: ReenviarCodigoDto): Promise<MensajeDto> {
     return this.servicio.reenviarCodigo(datos);
   }

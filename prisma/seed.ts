@@ -35,6 +35,13 @@ async function parametros() {
       'Porcentaje reembolsable según los días de antelación (RN-14).',
     ],
     ['version_politica_datos', '2026-10', 'Versión vigente de la política de datos personales.'],
+    ['minutos_vigencia_codigo', 15, 'Minutos de validez del código de verificación de correo.'],
+    ['max_intentos_codigo', 5, 'Intentos permitidos por código de verificación.'],
+    [
+      'segundos_espera_reenvio_codigo',
+      60,
+      'Tiempo mínimo entre dos envíos del código (máximo 1 por minuto).',
+    ],
     [
       'cuenta_recaudo',
       {
