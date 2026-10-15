@@ -2,6 +2,7 @@
 
 correo (plantillas), notificaciones en la app
 
-Responsable: Kevin Guerrero (correos y centro de notificaciones, semana 3)
+Responsable: Isabel Cerón
 
-Estado: sin código (Fase 0). Se construye siguiendo el plan `docs/architecture/08-plan-de-trabajo-20-dias.md` y la estructura de `modules/inventario`.
+Estado: puerto hexagonal de correo y adaptador SMTP implementados para la verificación de correo.
+El centro de notificaciones en la aplicación y las plantillas quedan pendientes.

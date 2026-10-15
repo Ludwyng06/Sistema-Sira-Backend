@@ -27,6 +27,23 @@ describe('ApiErrores', () => {
     });
   });
 
+  it('documenta el estado 503 con el DTO de error', () => {
+    class ControladorPrueba {
+      @ApiErrores(503)
+      metodo(): void {}
+    }
+
+    const respuestas = Reflect.getMetadata(
+      DECORATORS.API_RESPONSE,
+      ControladorPrueba.prototype.metodo,
+    ) as Record<string, { description: string; type: unknown }>;
+
+    expect(respuestas['503']).toMatchObject({
+      description: 'Servicio externo no disponible, por ejemplo el correo.',
+      type: RespuestaErrorDto,
+    });
+  });
+
   it('falla temprano si un estado no tiene descripción', () => {
     expect(() => ApiErrores(418)).toThrow(
       'No hay una descripción de error definida para el estado HTTP 418.',

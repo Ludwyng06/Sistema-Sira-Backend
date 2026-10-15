@@ -11,6 +11,7 @@ export const DESCRIPCION_POR_ESTADO: Readonly<Record<number, string>> = {
   422: 'Regla de negocio.',
   429: 'Límite de peticiones.',
   501: 'Funcionalidad aún no implementada.',
+  503: 'Servicio externo no disponible, por ejemplo el correo.',
 };
 
 export function ApiErrores(...estados: number[]) {
