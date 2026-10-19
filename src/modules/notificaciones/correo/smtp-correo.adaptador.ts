@@ -4,6 +4,16 @@ import nodemailer from 'nodemailer';
 import { ErrorDominio } from '../../../shared/errores/error-dominio.js';
 import type { CorreoPort, MensajeCorreo } from './correo.port.js';
 
+/**
+ * Tiempos de espera cortos: el correo se envía en la misma petición que cambia el estado de una solicitud y
+ * un servidor SMTP lento no debe dejar colgado al usuario (el predeterminado de nodemailer es de 2 minutos).
+ */
+export const TIEMPOS_SMTP = {
+  connectionTimeout: 5_000,
+  greetingTimeout: 5_000,
+  socketTimeout: 10_000,
+} as const;
+
 @Injectable()
 export class SmtpCorreoAdaptador implements CorreoPort, OnModuleDestroy {
   private readonly logger = new Logger(SmtpCorreoAdaptador.name);
@@ -16,6 +26,7 @@ export class SmtpCorreoAdaptador implements CorreoPort, OnModuleDestroy {
       host: this.config.getOrThrow<string>('SMTP_HOST'),
       port: puerto,
       secure: puerto === 465,
+      ...TIEMPOS_SMTP,
       ...(usuario.trim()
         ? {
             auth: {

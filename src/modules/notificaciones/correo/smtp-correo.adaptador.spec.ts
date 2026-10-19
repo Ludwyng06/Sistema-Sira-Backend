@@ -62,6 +62,9 @@ describe('SmtpCorreoAdaptador', () => {
       host: 'localhost',
       port: 1025,
       secure: false,
+      connectionTimeout: 5_000,
+      greetingTimeout: 5_000,
+      socketTimeout: 10_000,
     });
   });
 
@@ -72,6 +75,9 @@ describe('SmtpCorreoAdaptador', () => {
       host: 'localhost',
       port: 465,
       secure: true,
+      connectionTimeout: 5_000,
+      greetingTimeout: 5_000,
+      socketTimeout: 10_000,
       auth: { user: 'correo@sira.test', pass: 'contrasena-segura' },
     });
   });
