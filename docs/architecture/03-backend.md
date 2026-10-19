@@ -27,7 +27,7 @@ src/
    ├─ tarifario/                tarifas, recargos, motor de cálculo
    ├─ disponibilidad/           franjas, bloqueos, calendario, búsqueda inversa
    ├─ reservas/                 solicitudes, ítems, máquina de estados, cotización
-   ├─ aprobaciones/             aval, aprobación, escalamiento
+   ├─ aprobaciones/             aval, aprobación, escalamiento (la lógica vive en reservas/: ver su README)
    ├─ pagos/                    órdenes, consignación, puerto de pasarela, webhooks
    ├─ actas/                    entrega, devolución, novedades
    ├─ notificaciones/           correo (plantillas), notificaciones en la app
@@ -180,24 +180,38 @@ Prefijo global `/api`. Autenticación `Bearer` salvo los marcados 🌐 (público
 | GET | `/espacios` | 🌐 | Filtros: `sede`, `bloque`, `tipo`, `asistentes`, `pagina`, `porPagina` (códigos). |
 | GET | `/espacios/:codigo` | 🌐 | Ficha: fotos, elementos, condiciones, tarifas públicas. |
 | GET | `/tipos-espacio` | 🌐 | Tipos de espacio activos y sus reglas de anticipación. |
-| POST · PATCH | `/espacios` · `/espacios/:codigo/archivar` | Admin | Crear y archivar (204; archivar en vez de borrar). |
-| POST | `/espacios/:id/fotos` | Admin, Responsable | Multipart, máx. 10 MB, genera variantes WebP. |
-| CRUD | `/sedes`, `/bloques`, `/tipos-espacio`, `/elementos` | Admin | |
+| POST · PATCH | `/espacios` · `/espacios/:codigo` | Admin | Crear y modificar. El código y el bloque no cambian. |
+| PATCH | `/espacios/:codigo/archivar` | Admin | 204. Archivar en vez de borrar; 409 si hay reservas futuras. |
+| POST · DELETE | `/espacios/:id/fotos` · `/espacios/:id/fotos/:fotoId` | Admin, Responsable | Multipart, máx. 10 MB, genera variantes WebP. |
+| GET | `/fotos/:id/:variante` | 🌐 | Sirve la variante de una foto. |
+| GET · POST · PATCH | `/sedes/gestion` · `/sedes` · `/sedes/:id` | Admin | Listado (activas y archivadas), alta y edición. El código no cambia. |
+| PATCH | `/sedes/:id/archivar` · `/sedes/:id/restaurar` | Admin | Nada se borra. 409 `SEDE_CON_BLOQUES` si aún tiene bloques activos. |
+| GET · POST · PATCH | `/bloques` · `/bloques/:id` | Admin | Filtros `sedeId`, `activo`. Reducir `numeroPisos` es 422 si hay espacios en los pisos que sobran. |
+| PATCH | `/bloques/:id/archivar` · `/bloques/:id/restaurar` | Admin | 409 `BLOQUE_CON_ESPACIOS`; restaurar exige la sede activa. |
+| GET · POST · PATCH | `/tipos-espacio/gestion` · `/tipos-espacio` · `/tipos-espacio/:id` | Admin | Anticipación (RN-04), días hábiles y aforo que exige póliza. |
+| PATCH | `/tipos-espacio/:id/archivar` · `/tipos-espacio/:id/restaurar` | Admin | 409 `TIPO_CON_ESPACIOS`. |
+| GET · POST · PATCH | `/elementos` · `/elementos/:id` | Admin | Filtros `espacioId`, `estado`. Placa de inventario única (409 `PLACA_REGISTRADA`); `espacioId` en el PATCH lo traslada. |
+| PATCH | `/elementos/:id/baja` | Admin | Estado `DADO_DE_BAJA`; no se borra. |
 | GET | `/disponibilidad` | 🌐 | `espacioId`, `desde`, `hasta` → franjas con estado. Datos personales nunca. |
 | GET | `/disponibilidad/sede` | 🌐 | Ocupación agregada de una sede o bloque en un rango. |
 | GET | `/disponibilidad/buscar` | 🌐 | Búsqueda inversa: `fecha`, `horaInicio`, `horaFin`, `asistentes`, `sedeId`. |
-| POST | `/bloqueos` | Admin, Responsable | Con RRULE opcional. |
+| POST | `/bloqueos` | Admin, Responsable | Con RRULE opcional. 409 si choca con una franja. |
+| PATCH | `/bloqueos/:id/anular` | Admin, Responsable | Libera las franjas del bloqueo. |
 | POST | `/bloqueos/importar-horario` | Admin | CSV del horario académico → reporte de conflictos. |
 | POST | `/tarifas/calcular` | 🌐 | Simulador. No persiste. |
-| CRUD | `/tarifas`, `/recargos`, `/festivos` | Admin | |
+| GET · POST · PATCH | `/tarifas` · `/tarifas/:id` | Admin | Una tarifa nueva cierra la anterior; el PATCH solo cierra la vigencia o edita el acuerdo (RN-05). |
+| GET · PATCH | `/recargos` · `/recargos/:tipo` | Admin | `NOCTURNO`, `DOMINICAL`, `FESTIVO`. |
+| GET · POST · DELETE | `/festivos` · `/festivos/:id` | Admin | `:id` es la fecha AAAA-MM-DD. Único borrado físico del tarifario. |
 | GET | `/servicios` | 🌐 | Catálogo, filtrable por `tipoEspacioId`. |
-| CRUD | `/servicios`, `/proveedores` | Admin | |
+| GET · POST · PATCH · DELETE | `/servicios/gestion` · `/servicios` · `/servicios/:id` | Admin | DELETE desactiva (`activo = false`); no borra. |
+| GET · POST · PATCH · DELETE | `/proveedores` · `/proveedores/:id` | Admin | Desactivar un proveedor desactiva sus servicios. Contacto y porcentaje son privados. |
 | POST | `/solicitudes` | Solicitante | Crea borrador. |
 | GET | `/solicitudes` | Según rol | Propias / bandeja / todas. Filtros por estado. |
 | GET | `/solicitudes/:id` | Según alcance | Detalle completo. |
 | PATCH | `/solicitudes/:id` | Dueño (borrador) | Datos del evento. |
 | POST/DELETE | `/solicitudes/:id/reservas` · `/solicitudes/:id/servicios` | Dueño (borrador) | Ítems. |
-| POST | `/solicitudes/:id/documentos` | Dueño | Adjuntos. |
+| GET · POST | `/solicitudes/:id/documentos` | Dueño, según alcance | Adjuntos. |
+| GET · DELETE | `/solicitudes/:id/documentos/:documentoId[/archivo]` | Según alcance | Descarga o retira un adjunto. |
 | POST | `/solicitudes/:id/enviar` | Dueño | UC-01. |
 | POST | `/solicitudes/:id/decisiones` | Responsable, Aprobador | UC-02. |
 | POST | `/solicitudes/:id/cancelar` | Dueño, Admin | RN-14. |
@@ -205,15 +219,19 @@ Prefijo global `/api`. Autenticación `Bearer` salvo los marcados 🌐 (público
 | POST | `/pagos/ordenes` | Dueño | UC-03. 422 si exenta. |
 | POST | `/pagos/ordenes/:id/soporte` | Dueño | Comprobante. |
 | POST | `/pagos/ordenes/:id/verificacion` | Tesorería | Aprueba o rechaza. |
+| POST | `/pagos/ordenes/:id/pago-tardio` | Tesorería | RN-02d: confirma una solicitud vencida si las franjas siguen libres. |
+| GET | `/pagos/ordenes/:id/soporte` | Según alcance | Descarga el comprobante. |
 | GET | `/pagos/ordenes` | Tesorería, Auditor | Conciliación. |
 | POST | `/pagos/webhook/:proveedor` | 🌐 (firma) | Fase posterior. |
 | POST | `/actas` | Responsable | Entrega o devolución. |
-| GET | `/actas/:id.pdf` | Según alcance | |
+| GET | `/actas/:id` · `/actas/:id.pdf` | Según alcance | Detalle y PDF. |
 | GET | `/notificaciones` · PATCH `/notificaciones/:id/leida` | Autenticado | |
 | GET | `/reportes/tablero` | Admin, Aprobador, Tesorería, Auditor | Indicadores RF-REP-01. |
-| GET | `/reportes/:tipo.xlsx` | Según rol | Exportaciones. |
+| GET | `/reportes/:tipo.xlsx` · `/reportes/:tipo.csv` | Según rol | Exportaciones. |
 | GET | `/auditoria` | Admin, Auditor | Bitácora filtrable. |
-| CRUD | `/usuarios`, `/dependencias`, `/parametros` | Admin | |
+| GET · PATCH · PUT | `/usuarios` · `/usuarios/:id/estado` · `/usuarios/:id/roles` | Admin | Los usuarios no se borran: se activan o desactivan. |
+| GET · POST · PATCH | `/dependencias` · `/dependencias/:id` · `/dependencias/:id/archivar` · `/dependencias/:id/restaurar` | Admin | 409 si tiene espacios activos. |
+| GET · PATCH | `/parametros` · `/parametros/:clave` | Admin | Plazos, cuenta de recaudo y reglas leídas por los servicios. |
 
 ## 6. Errores
 
