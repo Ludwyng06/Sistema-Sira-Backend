@@ -7,6 +7,11 @@ import type { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import type { CorreoPort } from '../../notificaciones/correo/correo.port.js';
 import { CodigoVerificacionService } from './codigo-verificacion.service.js';
 
+vi.mock('argon2', async (importarOriginal) => {
+  const real = await importarOriginal<typeof import('argon2')>();
+  return { ...real, verify: vi.fn(real.verify) };
+});
+
 const { randomIntMock } = vi.hoisted(() => ({ randomIntMock: vi.fn() }));
 vi.mock('node:crypto', async (importarOriginal) => ({
   ...(await importarOriginal<typeof import('node:crypto')>()),
@@ -198,7 +203,7 @@ describe('CodigoVerificacionService', () => {
         detalles: { intentosRestantes: 3 },
       });
       expect(tablaCodigo.updateMany).toHaveBeenCalledWith({
-        where: { id: 'c1', intentos: { lt: 5 } },
+        where: { id: 'c1', usadoEn: null, intentos: { lt: 5 } },
         data: { intentos: { increment: 1 } },
       });
     });
@@ -219,11 +224,29 @@ describe('CodigoVerificacionService', () => {
       expect(error).toMatchObject({ codigo: 'CODIGO_AGOTADO', status: 422 });
     });
 
-    it('incremento sin filas (otra petición agotó el cupo): CODIGO_AGOTADO', async () => {
+    it('incremento sin filas (otra petición agotó el cupo): CODIGO_AGOTADO sin comparar el código', async () => {
+      const verificar = vi.mocked(argon2.verify);
+      verificar.mockClear();
       const { servicio, tablaCodigo } = conCodigo(1);
       tablaCodigo.updateMany.mockResolvedValue({ count: 0 });
-      const error = await capturar(servicio.verificarCorreo({ ...datos, codigo: '000000' }));
+      const error = await capturar(servicio.verificarCorreo({ ...datos, codigo: '123456' }));
       expect(error.codigo).toBe('CODIGO_AGOTADO');
+      expect(verificar).not.toHaveBeenCalled();
+    });
+
+    it('reserva el intento ANTES de comparar el código (evita adivinar en paralelo)', async () => {
+      const orden: string[] = [];
+      const { servicio, tablaCodigo } = conCodigo(0);
+      tablaCodigo.updateMany.mockImplementationOnce(() => {
+        orden.push('reservar');
+        return Promise.resolve({ count: 1 });
+      });
+      vi.mocked(argon2.verify).mockImplementationOnce(() => {
+        orden.push('comparar');
+        return Promise.resolve(false);
+      });
+      await capturar(servicio.verificarCorreo({ ...datos, codigo: '000000' }));
+      expect(orden).toEqual(['reservar', 'comparar']);
     });
 
     it('código correcto: marca usadoEn y correoVerificado en una transacción', async () => {
@@ -244,7 +267,7 @@ describe('CodigoVerificacionService', () => {
 
     it('carrera: si otro proceso ya usó el código responde CODIGO_VENCIDO sin verificar', async () => {
       const { servicio, tablaCodigo, tablaUsuario } = conCodigo(0);
-      tablaCodigo.updateMany.mockResolvedValue({ count: 0 });
+      tablaCodigo.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
       const error = await capturar(servicio.verificarCorreo(datos));
       expect(error).toMatchObject({ codigo: 'CODIGO_VENCIDO', status: 422 });
       expect(tablaUsuario.update).not.toHaveBeenCalled();

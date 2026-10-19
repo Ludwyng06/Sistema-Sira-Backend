@@ -1,8 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { argon2id, hash } from 'argon2';
+import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import { argon2id, hash, verify } from 'argon2';
 import { Rol, TipoSolicitante } from '../../../generated/prisma/enums.js';
 import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
-import { ErrorDominio, noImplementado } from '../../../shared/errores/error-dominio.js';
+import { ErrorDominio } from '../../../shared/errores/error-dominio.js';
 import { ParametroService } from '../../../shared/parametros/parametro.service.js';
 import { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import type { IngresarDto } from '../dto/ingresar.dto.js';
@@ -10,29 +10,61 @@ import type { RecuperarDto } from '../dto/recuperar.dto.js';
 import type { ReenviarCodigoDto } from '../dto/reenviar-codigo.dto.js';
 import type { RegistroDto } from '../dto/registro.dto.js';
 import type { RestablecerDto } from '../dto/restablecer.dto.js';
-import type { MensajeDto, RegistroRespuestaDto, SesionDto, UsuarioSesionDto } from '../dto/respuestas.js';
+import type { MensajeDto, RegistroRespuestaDto, UsuarioSesionDto } from '../dto/respuestas.js';
 import type { VerificarCorreoDto } from '../dto/verificar-correo.dto.js';
 import { CodigoVerificacionService } from './codigo-verificacion.service.js';
+import { RecuperacionService } from './recuperacion.service.js';
+import { type ContextoSesion, type SesionEmitida, SesionService } from './sesion.service.js';
 
 export interface ContextoRegistro {
   ip: string;
   userAgent: string | null;
 }
 
+export interface ContextoIngreso extends ContextoSesion {
+  correlacionId: string | null;
+}
+
+const FORMATO_HORA = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'America/Bogota',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+function credencialesInvalidas(): ErrorDominio {
+  return new ErrorDominio('CREDENCIALES_INVALIDAS', 'El correo o la contraseña no son correctos.', 401);
+}
+
+function cuentaBloqueada(bloqueadaHasta: Date): ErrorDominio {
+  return new ErrorDominio(
+    'CUENTA_BLOQUEADA',
+    `Tu cuenta está bloqueada por seguridad. Intenta de nuevo a las ${FORMATO_HORA.format(bloqueadaHasta)}.`,
+    429,
+    { bloqueadaHasta: bloqueadaHasta.toISOString() },
+  );
+}
+
 const MENSAJE_CODIGO_ENVIADO = 'Te enviamos un código de verificación a tu correo.';
 const MENSAJE_CODIGO_NO_ENVIADO =
   'Tu cuenta fue creada, pero no pudimos enviarte el código. Usa «Reenviar código» en unos minutos.';
 
-/** Registro, verificación y reenvío implementados; el resto del contrato responde 501. */
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
+  private hashRelleno = '';
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly parametros: ParametroService,
     private readonly codigos: CodigoVerificacionService,
+    private readonly recuperacion: RecuperacionService,
+    private readonly sesiones: SesionService,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    this.hashRelleno = await hash('relleno-sin-cuenta-sira', { type: argon2id });
+  }
 
   async registrar(datos: RegistroDto, contexto: ContextoRegistro): Promise<RegistroRespuestaDto> {
     const versionVigente = await this.parametros.obtenerTexto('version_politica_datos');
@@ -131,28 +163,95 @@ export class AuthService {
     return this.codigos.reenviarVerificacionCorreo(datos);
   }
 
-  ingresar(_datos: IngresarDto): Promise<SesionDto> {
-    return Promise.reject(noImplementado('El ingreso al sistema'));
+  async ingresar(datos: IngresarDto, contexto: ContextoIngreso): Promise<SesionEmitida> {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { correo: datos.correo },
+      select: { id: true, hashContrasena: true, activo: true, bloqueadoHasta: true },
+    });
+    if (!usuario?.activo) {
+      await this.compararRelleno(datos.contrasena);
+      throw credencialesInvalidas();
+    }
+
+    const ahora = new Date();
+    if (usuario.bloqueadoHasta && usuario.bloqueadoHasta > ahora) {
+      throw cuentaBloqueada(usuario.bloqueadoHasta);
+    }
+
+    if (!(await verify(usuario.hashContrasena, datos.contrasena))) {
+      await this.registrarFallo(usuario.id, contexto);
+      throw credencialesInvalidas();
+    }
+
+    await this.prisma.usuario.update({
+      where: { id: usuario.id },
+      data: { intentosFallidos: 0, bloqueadoHasta: null, ultimoIngresoEn: ahora },
+    });
+    return this.sesiones.iniciar(usuario.id, contexto);
   }
 
-  refrescar(): Promise<SesionDto> {
-    return Promise.reject(noImplementado('El refresco de la sesión'));
+  refrescar(refreshToken: string | null, contexto: ContextoSesion): Promise<SesionEmitida> {
+    if (!refreshToken) {
+      return Promise.reject(
+        new ErrorDominio('SESION_INVALIDA', 'Tu sesión terminó. Ingresa de nuevo.', 401),
+      );
+    }
+    return this.sesiones.rotar(refreshToken, contexto);
   }
 
-  salir(_usuario: UsuarioAutenticado): Promise<void> {
-    return Promise.reject(noImplementado('El cierre de sesión'));
+  salir(refreshToken: string | null): Promise<void> {
+    return this.sesiones.cerrar(refreshToken);
   }
 
-  recuperar(_datos: RecuperarDto): Promise<MensajeDto> {
-    return Promise.reject(noImplementado('La recuperación de contraseña'));
+  recuperar(datos: RecuperarDto): Promise<MensajeDto> {
+    return this.recuperacion.solicitar(datos);
   }
 
-  restablecer(_datos: RestablecerDto): Promise<MensajeDto> {
-    return Promise.reject(noImplementado('El restablecimiento de contraseña'));
+  restablecer(datos: RestablecerDto): Promise<MensajeDto> {
+    return this.recuperacion.restablecer(datos);
   }
 
-  yo(_usuario: UsuarioAutenticado): Promise<UsuarioSesionDto> {
-    return Promise.reject(noImplementado('La consulta del perfil de la sesión'));
+  yo(usuario: UsuarioAutenticado): Promise<UsuarioSesionDto> {
+    return this.sesiones.datosUsuario(usuario.id);
+  }
+
+  private async compararRelleno(contrasena: string): Promise<void> {
+    if (!this.hashRelleno) await this.onModuleInit();
+    await verify(this.hashRelleno, contrasena);
+  }
+
+  private async registrarFallo(usuarioId: string, contexto: ContextoIngreso): Promise<void> {
+    const [maximo, minutos] = await Promise.all([
+      this.parametros.obtenerNumero('max_intentos_ingreso'),
+      this.parametros.obtenerNumero('minutos_bloqueo_ingreso'),
+    ]);
+    const { intentosFallidos } = await this.prisma.usuario.update({
+      where: { id: usuarioId },
+      data: { intentosFallidos: { increment: 1 } },
+      select: { intentosFallidos: true },
+    });
+    if (intentosFallidos < maximo) return;
+
+    const bloqueadoHasta = new Date(Date.now() + minutos * 60_000);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.usuario.update({
+        where: { id: usuarioId },
+        data: { bloqueadoHasta, intentosFallidos: 0 },
+      });
+      await tx.bitacora.create({
+        data: {
+          usuarioId,
+          accion: 'CUENTA_BLOQUEADA',
+          entidad: 'Usuario',
+          entidadId: usuarioId,
+          ip: contexto.ip,
+          userAgent: contexto.userAgent,
+          correlacionId: contexto.correlacionId,
+          datosDespues: { bloqueadoHasta: bloqueadoHasta.toISOString() },
+        },
+      });
+    });
+    throw cuentaBloqueada(bloqueadoHasta);
   }
 
   private esCorreoInstitucional(correo: string, dominios: string[]): boolean {

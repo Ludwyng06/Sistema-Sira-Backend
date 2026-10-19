@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { hash, verify } from 'argon2';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TipoDocumentoIdentidad, TipoSolicitante } from '../../../generated/prisma/enums.js';
 import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
@@ -13,6 +14,13 @@ import type { RestablecerDto } from '../dto/restablecer.dto.js';
 import type { VerificarCorreoDto } from '../dto/verificar-correo.dto.js';
 import { AuthService } from './auth.service.js';
 import type { CodigoVerificacionService } from './codigo-verificacion.service.js';
+import type { RecuperacionService } from './recuperacion.service.js';
+import type { SesionService } from './sesion.service.js';
+
+vi.mock('argon2', async (importarOriginal) => {
+  const real = await importarOriginal<typeof import('argon2')>();
+  return { ...real, verify: vi.fn(real.verify) };
+});
 
 const usuarioSesion: UsuarioAutenticado = {
   id: '3f2b8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b',
@@ -48,13 +56,15 @@ function crearEscenario() {
       create: vi.fn((args: { data: { correo: string; hashContrasena: string } }) =>
         Promise.resolve({ id: ID_USUARIO, correo: args.data.correo }),
       ),
+      update: vi.fn().mockResolvedValue({}),
     },
     usuarioRol: { create: vi.fn().mockResolvedValue({}) },
     solicitante: { create: vi.fn().mockResolvedValue({}) },
     consentimientoDatos: { create: vi.fn().mockResolvedValue({}) },
+    bitacora: { create: vi.fn().mockResolvedValue({}) },
   };
   const prisma = {
-    usuario: { findUnique: vi.fn().mockResolvedValue(null) },
+    usuario: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue({}) },
     solicitante: { findUnique: vi.fn().mockResolvedValue(null) },
     dependencia: { findFirst: vi.fn().mockResolvedValue({ id: ID_DEPENDENCIA }) },
     $transaction: vi.fn((callback: (t: typeof tx) => Promise<unknown>) => callback(tx)),
@@ -69,12 +79,24 @@ function crearEscenario() {
     verificarCorreo: vi.fn().mockResolvedValue({ mensaje: 'verificado' }),
     reenviarVerificacionCorreo: vi.fn().mockResolvedValue({ mensaje: 'reenviado' }),
   };
+  const recuperacion = {
+    solicitar: vi.fn().mockResolvedValue({ mensaje: 'solicitado' }),
+    restablecer: vi.fn().mockResolvedValue({ mensaje: 'restablecido' }),
+  };
+  const sesiones = {
+    iniciar: vi.fn().mockResolvedValue({ accessToken: 'jwt', refreshToken: 'r' }),
+    rotar: vi.fn().mockResolvedValue({ accessToken: 'jwt2', refreshToken: 'r2' }),
+    cerrar: vi.fn().mockResolvedValue(undefined),
+    datosUsuario: vi.fn().mockResolvedValue({ id: usuarioSesion.id }),
+  };
   const servicio = new AuthService(
     prisma as unknown as PrismaService,
     parametros as unknown as ParametroService,
     codigos as unknown as CodigoVerificacionService,
+    recuperacion as unknown as RecuperacionService,
+    sesiones as unknown as SesionService,
   );
-  return { servicio, prisma, parametros, codigos, tx };
+  return { servicio, prisma, parametros, codigos, recuperacion, sesiones, tx };
 }
 
 const rechazo = async (promesa: Promise<unknown>): Promise<unknown> => promesa.catch((e: unknown) => e);
@@ -368,21 +390,177 @@ describe('AuthService delegación en CodigoVerificacionService', () => {
   });
 });
 
-describe('AuthService (métodos sin implementar)', () => {
-  const { servicio } = crearEscenario();
+describe('AuthService (recuperación de contraseña)', () => {
+  it('recuperar delega en RecuperacionService.solicitar', async () => {
+    const e = crearEscenario();
+    const datos = { correo: 'ana@ejemplo.com' } as RecuperarDto;
+    await expect(e.servicio.recuperar(datos)).resolves.toEqual({ mensaje: 'solicitado' });
+    expect(e.recuperacion.solicitar).toHaveBeenCalledWith(datos);
+  });
 
-  const casos: [string, () => Promise<unknown>][] = [
-    ['ingresar', () => servicio.ingresar({} as IngresarDto)],
-    ['refrescar', () => servicio.refrescar()],
-    ['salir', () => servicio.salir(usuarioSesion)],
-    ['recuperar', () => servicio.recuperar({} as RecuperarDto)],
-    ['restablecer', () => servicio.restablecer({} as RestablecerDto)],
-    ['yo', () => servicio.yo(usuarioSesion)],
-  ];
+  it('restablecer delega en RecuperacionService.restablecer', async () => {
+    const e = crearEscenario();
+    const datos = { token: 'a.b', contrasenaNueva: 'Nueva-clave-2026' } as RestablecerDto;
+    await expect(e.servicio.restablecer(datos)).resolves.toEqual({ mensaje: 'restablecido' });
+    expect(e.recuperacion.restablecer).toHaveBeenCalledWith(datos);
+  });
+});
 
-  it.each(casos)('%s rechaza con NO_IMPLEMENTADO y estado 501', async (_nombre, llamar) => {
-    const error: unknown = await llamar().catch((err: unknown) => err);
+describe('AuthService.ingresar', () => {
+  const CONTEXTO_INGRESO = { ...CONTEXTO, correlacionId: 'corr-1' };
+  const datos = { correo: 'ana@ejemplo.com', contrasena: CONTRASENA } as IngresarDto;
+  let hashContrasena = '';
+  let e: ReturnType<typeof crearEscenario>;
+
+  const usuarioBd = (cambios: Record<string, unknown> = {}) => ({
+    id: ID_USUARIO,
+    hashContrasena,
+    activo: true,
+    bloqueadoHasta: null,
+    ...cambios,
+  });
+
+  beforeEach(async () => {
+    if (!hashContrasena) hashContrasena = await hash(CONTRASENA);
+    e = crearEscenario();
+    await e.servicio.onModuleInit();
+    vi.mocked(verify).mockClear();
+    e.parametros.obtenerNumero.mockImplementation((clave: string) =>
+      Promise.resolve(clave === 'max_intentos_ingreso' ? 5 : 15),
+    );
+  });
+
+  it.each([
+    ['inexistente', null],
+    ['inactivo', { activo: false }],
+  ])('un usuario %s da 401 y ejecuta el verify de relleno', async (_caso, cambios) => {
+    e.prisma.usuario.findUnique.mockResolvedValue(cambios === null ? null : usuarioBd(cambios));
+    const error = await rechazo(e.servicio.ingresar(datos, CONTEXTO_INGRESO));
+
+    expect(error).toMatchObject({ codigo: 'CREDENCIALES_INVALIDAS', status: 401 });
+    expect(error).toHaveProperty('message', 'El correo o la contraseña no son correctos.');
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(verify).mock.calls[0]?.[0]).not.toBe(hashContrasena);
+    expect(e.prisma.usuario.update).not.toHaveBeenCalled();
+  });
+
+  it('una cuenta bloqueada da 429 con la hora de Bogotá y no compara la contraseña', async () => {
+    const hasta = new Date('2026-10-15T19:45:00.000Z');
+    e.prisma.usuario.findUnique.mockResolvedValue(usuarioBd({ bloqueadoHasta: hasta }));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-15T19:00:00.000Z'));
+    try {
+      const error = await rechazo(e.servicio.ingresar(datos, CONTEXTO_INGRESO));
+      expect(error).toMatchObject({
+        codigo: 'CUENTA_BLOQUEADA',
+        status: 429,
+        detalles: { bloqueadaHasta: hasta.toISOString() },
+      });
+      expect(error).toHaveProperty(
+        'message',
+        'Tu cuenta está bloqueada por seguridad. Intenta de nuevo a las 14:45.',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(verify).not.toHaveBeenCalled();
+    expect(e.prisma.usuario.update).not.toHaveBeenCalled();
+  });
+
+  it('una contraseña incorrecta incrementa de forma atómica y da 401', async () => {
+    e.prisma.usuario.findUnique.mockResolvedValue(usuarioBd());
+    e.prisma.usuario.update.mockResolvedValue({ intentosFallidos: 2 });
+    const error = await rechazo(
+      e.servicio.ingresar({ ...datos, contrasena: 'incorrecta-123' }, CONTEXTO_INGRESO),
+    );
+
+    expect(error).toMatchObject({ codigo: 'CREDENCIALES_INVALIDAS', status: 401 });
+    expect(e.prisma.usuario.update).toHaveBeenCalledWith({
+      where: { id: ID_USUARIO },
+      data: { intentosFallidos: { increment: 1 } },
+      select: { intentosFallidos: true },
+    });
+    expect(e.prisma.$transaction).not.toHaveBeenCalled();
+    expect(e.sesiones.iniciar).not.toHaveBeenCalled();
+  });
+
+  it('el intento que llega al máximo bloquea, escribe bitácora en una transacción y da 429', async () => {
+    e.prisma.usuario.findUnique.mockResolvedValue(usuarioBd());
+    e.prisma.usuario.update.mockResolvedValue({ intentosFallidos: 5 });
+    const antes = Date.now();
+    const error = await rechazo(
+      e.servicio.ingresar({ ...datos, contrasena: 'incorrecta-123' }, CONTEXTO_INGRESO),
+    );
+
+    expect(error).toMatchObject({ codigo: 'CUENTA_BLOQUEADA', status: 429 });
+    expect(e.prisma.$transaction).toHaveBeenCalledOnce();
+    const { data } = e.tx.usuario.update.mock.calls[0]![0] as {
+      data: { bloqueadoHasta: Date; intentosFallidos: number };
+    };
+    expect(data.intentosFallidos).toBe(0);
+    expect(data.bloqueadoHasta.getTime()).toBeGreaterThanOrEqual(antes + 15 * 60_000);
+    expect(e.tx.bitacora.create).toHaveBeenCalledWith({
+      data: {
+        usuarioId: ID_USUARIO,
+        accion: 'CUENTA_BLOQUEADA',
+        entidad: 'Usuario',
+        entidadId: ID_USUARIO,
+        ip: CONTEXTO.ip,
+        userAgent: CONTEXTO.userAgent,
+        correlacionId: 'corr-1',
+        datosDespues: { bloqueadoHasta: data.bloqueadoHasta.toISOString() },
+      },
+    });
+    expect(error).toMatchObject({ detalles: { bloqueadaHasta: data.bloqueadoHasta.toISOString() } });
+  });
+
+  it('una contraseña correcta reinicia contadores, registra el ingreso e inicia la sesión', async () => {
+    e.prisma.usuario.findUnique.mockResolvedValue(usuarioBd());
+    const resultado = await e.servicio.ingresar(datos, CONTEXTO_INGRESO);
+
+    expect(e.prisma.usuario.update).toHaveBeenCalledWith({
+      where: { id: ID_USUARIO },
+      data: { intentosFallidos: 0, bloqueadoHasta: null, ultimoIngresoEn: expect.any(Date) },
+    });
+    expect(e.sesiones.iniciar).toHaveBeenCalledWith(ID_USUARIO, CONTEXTO_INGRESO);
+    expect(resultado).toMatchObject({ accessToken: 'jwt' });
+  });
+
+  it('un correo sin verificar sí puede ingresar y un bloqueo vencido no estorba', async () => {
+    e.prisma.usuario.findUnique.mockResolvedValue(
+      usuarioBd({ correoVerificado: false, bloqueadoHasta: new Date(Date.now() - 1000) }),
+    );
+    await expect(e.servicio.ingresar(datos, CONTEXTO_INGRESO)).resolves.toMatchObject({ accessToken: 'jwt' });
+    expect(e.sesiones.iniciar).toHaveBeenCalledOnce();
+  });
+});
+
+describe('AuthService (sesión)', () => {
+  it('refrescar sin token da 401 SESION_INVALIDA', async () => {
+    const e = crearEscenario();
+    const error = await rechazo(e.servicio.refrescar(null, CONTEXTO));
     expect(error).toBeInstanceOf(ErrorDominio);
-    expect(error).toMatchObject({ codigo: 'NO_IMPLEMENTADO', status: 501 });
+    expect(error).toMatchObject({ codigo: 'SESION_INVALIDA', status: 401 });
+    expect(e.sesiones.rotar).not.toHaveBeenCalled();
+  });
+
+  it('refrescar con token delega en rotar', async () => {
+    const e = crearEscenario();
+    await expect(e.servicio.refrescar('abc', CONTEXTO)).resolves.toMatchObject({ accessToken: 'jwt2' });
+    expect(e.sesiones.rotar).toHaveBeenCalledWith('abc', CONTEXTO);
+  });
+
+  it('salir delega en cerrar, también con null', async () => {
+    const e = crearEscenario();
+    await e.servicio.salir('abc');
+    await e.servicio.salir(null);
+    expect(e.sesiones.cerrar).toHaveBeenNthCalledWith(1, 'abc');
+    expect(e.sesiones.cerrar).toHaveBeenNthCalledWith(2, null);
+  });
+
+  it('yo delega en datosUsuario', async () => {
+    const e = crearEscenario();
+    await expect(e.servicio.yo(usuarioSesion)).resolves.toEqual({ id: usuarioSesion.id });
+    expect(e.sesiones.datosUsuario).toHaveBeenCalledWith(usuarioSesion.id);
   });
 });

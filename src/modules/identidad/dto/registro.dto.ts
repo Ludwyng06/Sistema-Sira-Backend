@@ -89,6 +89,7 @@ export class RegistroDto extends CorreoDto {
   tipoDocumento!: TipoDocumentoIdentidad;
 
   @ApiProperty({ description: 'Número de documento: letras, números y guion.', example: '1020304050' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
   @IsString({ message: texto })
   @MinLength(5, { message: largoMinimo(5) })
   @MaxLength(20, { message: largo(20) })

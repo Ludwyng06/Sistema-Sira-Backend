@@ -87,14 +87,18 @@ export class CodigoVerificacionService {
     const maxIntentos = await this.parametros.obtenerNumero('max_intentos_codigo');
     if (registro.intentos >= maxIntentos) throw codigoAgotado();
 
+    // El intento se reserva de forma atómica ANTES de comparar: si no, N peticiones simultáneas
+    // evaluarían N códigos aunque el contador solo admita `maxIntentos`.
+    const { count } = await this.prisma.codigoVerificacion.updateMany({
+      where: { id: registro.id, usadoEn: null, intentos: { lt: maxIntentos } },
+      data: { intentos: { increment: 1 } },
+    });
+    if (count === 0) throw codigoAgotado();
+
     const coincide = await argon2.verify(registro.hashCodigo, datos.codigo);
     if (!coincide) {
-      const { count } = await this.prisma.codigoVerificacion.updateMany({
-        where: { id: registro.id, intentos: { lt: maxIntentos } },
-        data: { intentos: { increment: 1 } },
-      });
       const restantes = maxIntentos - (registro.intentos + 1);
-      if (count === 0 || restantes <= 0) throw codigoAgotado();
+      if (restantes <= 0) throw codigoAgotado();
       const mensaje =
         restantes === 1
           ? 'El código no es correcto. Te queda 1 intento.'
