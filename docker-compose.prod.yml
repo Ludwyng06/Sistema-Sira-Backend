@@ -47,12 +47,6 @@ services:
       SMTP_CONTRASENA: ${SMTP_CONTRASENA:-}
       CORREO_REMITENTE: ${CORREO_REMITENTE}
       ALMACENAMIENTO_DIR: /datos/almacenamiento
-      # Los archivos van al disco (volumen "almacenamiento"); la validación de arranque aún exige estas variables.
-      S3_ENDPOINT: http://sin-s3
-      S3_BUCKET: sira
-      S3_ACCESS_KEY: sin-s3
-      S3_SECRET_KEY: sin-s3
-      S3_URL_PUBLICA: http://sin-s3/sira
     volumes: ['almacenamiento:/datos/almacenamiento']
     ports: ['3001:3001']
 
