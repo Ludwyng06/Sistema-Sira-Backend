@@ -29,6 +29,11 @@ export class ParametroService {
     return valor;
   }
 
+  /** Parámetro estructurado (arreglo u objeto JSON); el llamador valida su forma. */
+  async obtenerJson(clave: string): Promise<unknown> {
+    return this.obtenerValor(clave);
+  }
+
   private async obtenerValor(clave: string): Promise<unknown> {
     const parametro = await this.prisma.parametro.findUnique({
       where: { clave },

@@ -77,4 +77,11 @@ describe('ParametroService', () => {
 
     await expect(crearServicio().obtenerNumero('limite')).rejects.toThrow('limite');
   });
+
+  it('obtenerJson devuelve el valor estructurado tal cual', async () => {
+    const politica = [{ diasAntes: 8, porcentaje: 100 }];
+    findUnique.mockResolvedValue({ valor: politica });
+
+    await expect(crearServicio().obtenerJson('politica_cancelacion')).resolves.toEqual(politica);
+  });
 });

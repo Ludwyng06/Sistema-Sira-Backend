@@ -20,6 +20,7 @@ export interface Configuracion {
   SMTP_USUARIO: string;
   SMTP_CONTRASENA: string;
   CORREO_REMITENTE: string;
+  ALMACENAMIENTO_DIR: string;
 }
 
 const OBLIGATORIAS = [
@@ -84,6 +85,7 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
     SMTP_USUARIO: texto('SMTP_USUARIO'),
     SMTP_CONTRASENA: texto('SMTP_CONTRASENA'),
     CORREO_REMITENTE: texto('CORREO_REMITENTE'),
+    ALMACENAMIENTO_DIR: texto('ALMACENAMIENTO_DIR', './almacenamiento'),
   };
 
   if (configuracion.NODE_ENV === 'production') {
