@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { ErrorDominio, noEncontrado } from '../../../shared/errores/error-dominio.js';
+import {
+  ErrorDominio,
+  noEncontrado,
+} from '../../../shared/errores/error-dominio.js';
 import { PrismaService } from '../../../shared/prisma/prisma.service.js';
+import type { ActualizarEspacioDto } from '../dto/actualizar-espacio.dto.js';
 import type { CrearEspacioDto } from '../dto/crear-espacio.dto.js';
 import type { EspacioCreadoDto } from '../dto/respuestas.js';
 
@@ -99,6 +103,130 @@ export class EspaciosAdminService {
       tipo: { codigo: tipo.codigo, nombre: tipo.nombre },
       bloque: { codigo: bloque.codigo, nombre: bloque.nombre },
       sede: { codigo: bloque.sede.codigo, nombre: bloque.sede.nombre },
+    };
+  }
+
+  /** Modifica los datos del espacio. El código y el bloque no cambian. */
+  async actualizar(
+    codigo: string,
+    datos: ActualizarEspacioDto,
+  ): Promise<EspacioCreadoDto> {
+    const actual = await this.prisma.espacio.findFirst({
+      where: { codigo: codigo.toUpperCase(), archivadoEn: null },
+      include: { bloque: { include: { sede: true } }, tipo: true },
+    });
+    if (!actual) throw noEncontrado('El espacio');
+
+    let tipo = actual.tipo;
+    if (datos.tipo !== undefined) {
+      const nuevo = await this.prisma.tipoEspacio.findUnique({
+        where: { codigo: datos.tipo.toUpperCase() },
+      });
+      if (!nuevo) {
+        throw new ErrorDominio(
+          'TIPO_ESPACIO_NO_ENCONTRADO',
+          `No existe el tipo de espacio ${datos.tipo.toUpperCase()}.`,
+          404,
+        );
+      }
+      tipo = nuevo;
+    }
+
+    const piso = datos.piso ?? actual.piso;
+    if (piso > actual.bloque.numeroPisos) {
+      throw new ErrorDominio(
+        'PISO_INVALIDO',
+        `El bloque ${actual.bloque.codigo} tiene ${actual.bloque.numeroPisos} piso(s); el piso ${piso} no existe.`,
+        422,
+      );
+    }
+
+    let dependenciaId: string | null | undefined;
+    if (datos.dependencia !== undefined) {
+      if (datos.dependencia === null) {
+        dependenciaId = null;
+      } else {
+        const dependencia = await this.prisma.dependencia.findUnique({
+          where: { codigo: datos.dependencia.toUpperCase() },
+        });
+        if (!dependencia) {
+          throw new ErrorDominio(
+            'DEPENDENCIA_NO_ENCONTRADA',
+            `No existe la dependencia ${datos.dependencia.toUpperCase()}.`,
+            404,
+          );
+        }
+        dependenciaId = dependencia.id;
+      }
+    }
+
+    if (datos.responsableId) {
+      const responsable = await this.prisma.usuario.findFirst({
+        where: { id: datos.responsableId, activo: true },
+        select: { id: true },
+      });
+      if (!responsable) {
+        throw new ErrorDominio(
+          'RESPONSABLE_NO_VALIDO',
+          'El responsable indicado no existe o está inactivo.',
+          422,
+        );
+      }
+    }
+
+    const espacio = await this.prisma.espacio.update({
+      where: { id: actual.id },
+      data: {
+        ...(datos.tipo !== undefined ? { tipoEspacioId: tipo.id } : {}),
+        ...(dependenciaId !== undefined ? { dependenciaId } : {}),
+        ...(datos.responsableId !== undefined
+          ? { responsableId: datos.responsableId }
+          : {}),
+        ...(datos.nombre !== undefined ? { nombre: datos.nombre.trim() } : {}),
+        ...(datos.piso !== undefined ? { piso: datos.piso } : {}),
+        ...(datos.capacidadPersonas !== undefined
+          ? { capacidadPersonas: datos.capacidadPersonas }
+          : {}),
+        ...(datos.areaM2 !== undefined ? { areaM2: datos.areaM2 } : {}),
+        ...(datos.descripcion !== undefined
+          ? { descripcion: datos.descripcion }
+          : {}),
+        ...(datos.condicionesUso !== undefined
+          ? { condicionesUso: datos.condicionesUso }
+          : {}),
+        ...(datos.estado !== undefined ? { estado: datos.estado } : {}),
+        ...(datos.requiereAval !== undefined
+          ? { requiereAval: datos.requiereAval }
+          : {}),
+        ...(datos.esReservable !== undefined
+          ? { esReservable: datos.esReservable }
+          : {}),
+        ...(datos.minutosMontaje !== undefined
+          ? { minutosMontaje: datos.minutosMontaje }
+          : {}),
+        ...(datos.minutosDesmontaje !== undefined
+          ? { minutosDesmontaje: datos.minutosDesmontaje }
+          : {}),
+        ...(datos.depositoValorFijo !== undefined
+          ? { depositoValorFijo: datos.depositoValorFijo }
+          : {}),
+        ...(datos.depositoPorcentaje !== undefined
+          ? { depositoPorcentaje: datos.depositoPorcentaje }
+          : {}),
+      },
+    });
+
+    return {
+      codigo: espacio.codigo,
+      nombre: espacio.nombre,
+      piso: espacio.piso,
+      capacidadPersonas: espacio.capacidadPersonas,
+      tipo: { codigo: tipo.codigo, nombre: tipo.nombre },
+      bloque: { codigo: actual.bloque.codigo, nombre: actual.bloque.nombre },
+      sede: {
+        codigo: actual.bloque.sede.codigo,
+        nombre: actual.bloque.sede.nombre,
+      },
     };
   }
 
