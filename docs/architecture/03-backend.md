@@ -180,7 +180,8 @@ Prefijo global `/api`. Autenticación `Bearer` salvo los marcados 🌐 (público
 | GET | `/espacios` | 🌐 | Filtros: `sede`, `bloque`, `tipo`, `asistentes`, `pagina`, `porPagina` (códigos). |
 | GET | `/espacios/:codigo` | 🌐 | Ficha: fotos, elementos, condiciones, tarifas públicas. |
 | GET | `/tipos-espacio` | 🌐 | Tipos de espacio activos y sus reglas de anticipación. |
-| POST · PATCH | `/espacios` · `/espacios/:codigo` | Admin | Crear y modificar. El código y el bloque no cambian. |
+| POST · PATCH | `/espacios` · `/espacios/:codigo` | Admin | Crear y modificar. El código y el bloque no cambian. Pasar a `FUERA_DE_SERVICIO` avisa a quienes tienen reservas futuras (RN-16). |
+| PUT | `/espacios/:codigo/horarios` | Admin | Reemplaza el horario de operación (RN-19). Lista vacía = sin restricción. |
 | PATCH | `/espacios/:codigo/archivar` | Admin | 204. Archivar en vez de borrar; 409 si hay reservas futuras. |
 | POST · DELETE | `/espacios/:id/fotos` · `/espacios/:id/fotos/:fotoId` | Admin, Responsable | Multipart, máx. 10 MB, genera variantes WebP. |
 | GET | `/fotos/:id/:variante` | 🌐 | Sirve la variante de una foto. |

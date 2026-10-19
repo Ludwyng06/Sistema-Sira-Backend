@@ -1,4 +1,12 @@
-import { Body, Controller, HttpCode, Param, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+  Put,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiConflictResponse,
@@ -13,7 +21,8 @@ import { Roles } from '../../../shared/auth/decoradores.js';
 import { Auditar } from '../../auditoria/auditar.decorador.js';
 import { ActualizarEspacioDto } from '../dto/actualizar-espacio.dto.js';
 import { CrearEspacioDto } from '../dto/crear-espacio.dto.js';
-import { EspacioCreadoDto } from '../dto/respuestas.js';
+import { ReemplazarHorariosDto } from '../dto/horarios-espacio.dto.js';
+import { EspacioCreadoDto, HorarioDto } from '../dto/respuestas.js';
 import { EspaciosAdminService } from '../services/espacios-admin.service.js';
 
 @ApiTags('Inventario · administración')
@@ -49,6 +58,24 @@ export class EspaciosAdminController {
     @Body() datos: ActualizarEspacioDto,
   ): Promise<EspacioCreadoDto> {
     return this.servicio.actualizar(codigo, datos);
+  }
+
+  @Put(':codigo/horarios')
+  @Auditar('ESPACIO_HORARIOS_REEMPLAZADOS', 'Espacio')
+  @ApiOperation({
+    summary: 'Reemplaza el horario de operación de un espacio.',
+    description:
+      'Un día que no aparezca queda cerrado; una lista vacía quita la restricción (RN-19). ' +
+      'No modifica las reservas ya hechas.\n\n' +
+      'Errores: 404 NO_ENCONTRADO; 422 DIA_REPETIDO o HORARIO_INVALIDO.',
+  })
+  @ApiOkResponse({ type: [HorarioDto] })
+  @ApiNotFoundResponse({ description: 'No existe el espacio.' })
+  reemplazarHorarios(
+    @Param('codigo') codigo: string,
+    @Body() datos: ReemplazarHorariosDto,
+  ): Promise<HorarioDto[]> {
+    return this.servicio.reemplazarHorarios(codigo, datos);
   }
 
   @Patch(':codigo/archivar')

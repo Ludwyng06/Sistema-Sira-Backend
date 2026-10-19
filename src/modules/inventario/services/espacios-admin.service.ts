@@ -4,13 +4,18 @@ import {
   noEncontrado,
 } from '../../../shared/errores/error-dominio.js';
 import { PrismaService } from '../../../shared/prisma/prisma.service.js';
+import { NotificacionesService } from '../../notificaciones/services/notificaciones.service.js';
 import type { ActualizarEspacioDto } from '../dto/actualizar-espacio.dto.js';
 import type { CrearEspacioDto } from '../dto/crear-espacio.dto.js';
-import type { EspacioCreadoDto } from '../dto/respuestas.js';
+import type { ReemplazarHorariosDto } from '../dto/horarios-espacio.dto.js';
+import type { EspacioCreadoDto, HorarioDto } from '../dto/respuestas.js';
 
 @Injectable()
 export class EspaciosAdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificaciones: NotificacionesService,
+  ) {}
 
   async crear(datos: CrearEspacioDto): Promise<EspacioCreadoDto> {
     const bloque = await this.prisma.bloque.findFirst({
@@ -216,6 +221,13 @@ export class EspaciosAdminService {
       },
     });
 
+    if (
+      datos.estado === 'FUERA_DE_SERVICIO' &&
+      actual.estado !== 'FUERA_DE_SERVICIO'
+    ) {
+      await this.avisarReprogramacion(actual.id, espacio.codigo);
+    }
+
     return {
       codigo: espacio.codigo,
       nombre: espacio.nombre,
@@ -228,6 +240,89 @@ export class EspaciosAdminService {
         nombre: actual.bloque.sede.nombre,
       },
     };
+  }
+
+  /**
+   * RN-16: un espacio fuera de servicio no admite solicitudes y quienes tienen reservas futuras en él
+   * reciben el aviso para reprogramar. Las reservas no se tocan: las reprograma su dueño con la oficina.
+   */
+  private async avisarReprogramacion(
+    espacioId: string,
+    codigo: string,
+  ): Promise<void> {
+    const franjas = await this.prisma.franjaOcupada.findMany({
+      where: {
+        espacioId,
+        origen: 'RESERVA',
+        estado: { in: ['RETENIDA', 'CONFIRMADA'] },
+        fin: { gt: new Date() },
+      },
+      select: { reservaItem: { select: { solicitudId: true } } },
+    });
+    const solicitudes = new Set(
+      franjas
+        .map((f) => f.reservaItem?.solicitudId)
+        .filter((id): id is string => id !== undefined),
+    );
+    for (const solicitudId of solicitudes) {
+      await this.notificaciones.notificarSolicitante(solicitudId, {
+        titulo: `El espacio ${codigo} quedó fuera de servicio`,
+        cuerpo:
+          `El espacio ${codigo} quedó fuera de servicio y tu reserva debe reprogramarse. ` +
+          'Comunícate con la oficina de espacios para elegir otra fecha o espacio.',
+      });
+    }
+  }
+
+  /** RN-19: reemplaza el horario de operación del espacio. Una lista vacía quita la restricción. */
+  async reemplazarHorarios(
+    codigo: string,
+    datos: ReemplazarHorariosDto,
+  ): Promise<HorarioDto[]> {
+    const espacio = await this.prisma.espacio.findFirst({
+      where: { codigo: codigo.toUpperCase(), archivadoEn: null },
+      select: { id: true },
+    });
+    if (!espacio) throw noEncontrado('El espacio');
+
+    const dias = new Set<number>();
+    for (const horario of datos.horarios) {
+      if (dias.has(horario.diaSemana)) {
+        throw new ErrorDominio(
+          'DIA_REPETIDO',
+          'Hay más de un horario para el mismo día de la semana.',
+          422,
+        );
+      }
+      dias.add(horario.diaSemana);
+      if (horario.abre >= horario.cierra) {
+        throw new ErrorDominio(
+          'HORARIO_INVALIDO',
+          'La hora de apertura debe ser anterior a la de cierre.',
+          422,
+        );
+      }
+    }
+
+    const guardados = await this.prisma.$transaction(async (tx) => {
+      await tx.horarioOperacion.deleteMany({
+        where: { espacioId: espacio.id },
+      });
+      if (datos.horarios.length > 0) {
+        await tx.horarioOperacion.createMany({
+          data: datos.horarios.map((h) => ({ espacioId: espacio.id, ...h })),
+        });
+      }
+      return tx.horarioOperacion.findMany({
+        where: { espacioId: espacio.id },
+        orderBy: { diaSemana: 'asc' },
+      });
+    });
+    return guardados.map((h) => ({
+      diaSemana: h.diaSemana,
+      abre: h.abre,
+      cierra: h.cierra,
+    }));
   }
 
   /** Nada se borra: el espacio se archiva, salvo que tenga reservas futuras. */

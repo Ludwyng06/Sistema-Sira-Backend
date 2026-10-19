@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { NotificacionesModule } from '../notificaciones/notificaciones.module.js';
 import { BloquesAdminController } from './controllers/bloques-admin.controller.js';
 import { ElementosAdminController } from './controllers/elementos-admin.controller.js';
 import { EspaciosAdminController } from './controllers/espacios-admin.controller.js';
@@ -13,6 +14,7 @@ import { SedesAdminService } from './services/sedes-admin.service.js';
 import { TiposEspacioAdminService } from './services/tipos-espacio-admin.service.js';
 
 @Module({
+  imports: [NotificacionesModule],
   controllers: [
     InventarioPublicoController,
     EspaciosAdminController,

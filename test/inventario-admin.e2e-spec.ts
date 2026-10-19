@@ -188,6 +188,49 @@ describe.sequential('Administración del inventario contra la base real', () => 
     ).toBe(404);
   });
 
+  it('RN-19: reemplaza el horario de operación y lo valida', async () => {
+    const ruta = `/api/espacios/${codigoEspacio}/horarios`;
+    const ok = await http
+      .put(ruta)
+      .set(auth(admin))
+      .send({
+        horarios: [
+          { diaSemana: 1, abre: '06:00', cierra: '22:00' },
+          { diaSemana: 2, abre: '08:00', cierra: '18:00' },
+        ],
+      });
+    expect(ok.status).toBe(200);
+    expect(ok.body).toEqual([
+      { diaSemana: 1, abre: '06:00', cierra: '22:00' },
+      { diaSemana: 2, abre: '08:00', cierra: '18:00' },
+    ]);
+    expect(await prisma.horarioOperacion.count({ where: { espacioId } })).toBe(
+      2,
+    );
+
+    const invertido = await http
+      .put(ruta)
+      .set(auth(admin))
+      .send({ horarios: [{ diaSemana: 1, abre: '22:00', cierra: '06:00' }] });
+    expect(invertido.status).toBe(422);
+    expect(cuerpo(invertido).codigo).toBe('HORARIO_INVALIDO');
+    const malaHora = await http
+      .put(ruta)
+      .set(auth(admin))
+      .send({ horarios: [{ diaSemana: 9, abre: '6am', cierra: '22:00' }] });
+    expect(malaHora.status).toBe(400);
+    expect(await prisma.horarioOperacion.count({ where: { espacioId } })).toBe(
+      2,
+    );
+
+    expect(
+      (await http.put(ruta).set(auth(admin)).send({ horarios: [] })).status,
+    ).toBe(200);
+    expect(await prisma.horarioOperacion.count({ where: { espacioId } })).toBe(
+      0,
+    );
+  });
+
   it('registra, traslada y da de baja elementos con placa única', async () => {
     const elemento = await http
       .post('/api/elementos')

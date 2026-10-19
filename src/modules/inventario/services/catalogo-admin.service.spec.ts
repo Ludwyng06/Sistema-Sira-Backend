@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PrismaService } from '../../../shared/prisma/prisma.service.js';
+import type { NotificacionesService } from '../../notificaciones/services/notificaciones.service.js';
 import { BloquesAdminService } from './bloques-admin.service.js';
 import { ElementosAdminService } from './elementos-admin.service.js';
 import { EspaciosAdminService } from './espacios-admin.service.js';
@@ -476,6 +477,7 @@ describe('EspaciosAdminService.actualizar', () => {
       numeroPisos: 3,
       sede: { codigo: 'MOC', nombre: 'Mocoa' },
     },
+    estado: 'DISPONIBLE',
     tipo: { id: OTRO_ID, codigo: 'AULA', nombre: 'Aula' },
   };
 
@@ -494,18 +496,53 @@ describe('EspaciosAdminService.actualizar', () => {
         ),
       },
       tipoEspacio: {
-        findUnique: vi
-          .fn()
-          .mockResolvedValue({
-            id: ID,
-            codigo: 'LABORATORIO',
-            nombre: 'Laboratorio',
-          }),
+        findUnique: vi.fn().mockResolvedValue({
+          id: ID,
+          codigo: 'LABORATORIO',
+          nombre: 'Laboratorio',
+        }),
       },
       dependencia: { findUnique: vi.fn().mockResolvedValue({ id: ID }) },
       usuario: { findFirst: vi.fn().mockResolvedValue({ id: ID }) },
+      franjaOcupada: {
+        findMany: vi
+          .fn()
+          .mockResolvedValue([
+            { reservaItem: { solicitudId: 'sol-1' } },
+            { reservaItem: { solicitudId: 'sol-1' } },
+            { reservaItem: { solicitudId: 'sol-2' } },
+          ]),
+      },
     };
-    return { servicio: new EspaciosAdminService(comoPrisma(prisma)), prisma };
+    const tx = {
+      horarioOperacion: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 7 }),
+        createMany: vi.fn().mockResolvedValue({ count: 2 }),
+        findMany: vi
+          .fn()
+          .mockResolvedValue([
+            { diaSemana: 1, abre: '06:00', cierra: '22:00' },
+          ]),
+      },
+    };
+    const horarioPrisma = {
+      ...prisma,
+      $transaction: vi.fn((fn: (cliente: typeof tx) => Promise<unknown>) =>
+        fn(tx),
+      ),
+    };
+    const notificaciones = {
+      notificarSolicitante: vi.fn().mockResolvedValue(undefined),
+    };
+    return {
+      servicio: new EspaciosAdminService(
+        comoPrisma(horarioPrisma),
+        notificaciones as unknown as NotificacionesService,
+      ),
+      prisma,
+      tx,
+      notificaciones,
+    };
   }
 
   it('cambia solo los campos enviados', async () => {
@@ -574,6 +611,113 @@ describe('EspaciosAdminService.actualizar', () => {
     const ninguno = entorno(null);
     expect(
       await rechazo(ninguno.servicio.actualizar('Z-9', { nombre: 'X' })),
+    ).toMatchObject({ status: 404 });
+  });
+
+  it('RN-16: al dejar fuera de servicio avisa una vez a cada solicitante con reservas futuras', async () => {
+    const e = entorno();
+    await e.servicio.actualizar('A-101', { estado: 'FUERA_DE_SERVICIO' });
+    expect(e.prisma.franjaOcupada.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          origen: 'RESERVA',
+          estado: { in: ['RETENIDA', 'CONFIRMADA'] },
+        }),
+      }),
+    );
+    expect(e.notificaciones.notificarSolicitante).toHaveBeenCalledTimes(2);
+    expect(e.notificaciones.notificarSolicitante).toHaveBeenCalledWith(
+      'sol-1',
+      expect.objectContaining({ titulo: expect.stringContaining('A-101') }),
+    );
+  });
+
+  it('RN-16: no avisa si el estado no cambia a fuera de servicio', async () => {
+    const e = entorno();
+    await e.servicio.actualizar('A-101', { estado: 'EN_MANTENIMIENTO' });
+    const ya = entorno({ ...espacioActual, estado: 'FUERA_DE_SERVICIO' });
+    await ya.servicio.actualizar('A-101', { estado: 'FUERA_DE_SERVICIO' });
+    expect(e.notificaciones.notificarSolicitante).not.toHaveBeenCalled();
+    expect(ya.notificaciones.notificarSolicitante).not.toHaveBeenCalled();
+  });
+});
+
+describe('EspaciosAdminService.reemplazarHorarios', () => {
+  function entorno(espacio: unknown = { id: ID }) {
+    const tx = {
+      horarioOperacion: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 7 }),
+        createMany: vi.fn().mockResolvedValue({ count: 2 }),
+        findMany: vi.fn().mockResolvedValue([
+          { diaSemana: 1, abre: '06:00', cierra: '22:00' },
+          { diaSemana: 2, abre: '06:00', cierra: '22:00' },
+        ]),
+      },
+    };
+    const prisma = {
+      espacio: { findFirst: vi.fn().mockResolvedValue(espacio) },
+      $transaction: vi.fn((fn: (cliente: typeof tx) => Promise<unknown>) =>
+        fn(tx),
+      ),
+    };
+    return {
+      servicio: new EspaciosAdminService(
+        comoPrisma(prisma),
+        {} as NotificacionesService,
+      ),
+      prisma,
+      tx,
+    };
+  }
+
+  it('reemplaza el horario completo en una transacción', async () => {
+    const e = entorno();
+    const r = await e.servicio.reemplazarHorarios('a-101', {
+      horarios: [
+        { diaSemana: 1, abre: '06:00', cierra: '22:00' },
+        { diaSemana: 2, abre: '06:00', cierra: '22:00' },
+      ],
+    });
+    expect(e.tx.horarioOperacion.deleteMany).toHaveBeenCalledWith({
+      where: { espacioId: ID },
+    });
+    expect(e.tx.horarioOperacion.createMany).toHaveBeenCalled();
+    expect(r).toHaveLength(2);
+  });
+
+  it('una lista vacía solo borra y no crea nada', async () => {
+    const e = entorno();
+    await e.servicio.reemplazarHorarios('A-101', { horarios: [] });
+    expect(e.tx.horarioOperacion.deleteMany).toHaveBeenCalled();
+    expect(e.tx.horarioOperacion.createMany).not.toHaveBeenCalled();
+  });
+
+  it('rechaza días repetidos, horas invertidas y espacios inexistentes', async () => {
+    const e = entorno();
+    expect(
+      await rechazo(
+        e.servicio.reemplazarHorarios('A-101', {
+          horarios: [
+            { diaSemana: 1, abre: '06:00', cierra: '12:00' },
+            { diaSemana: 1, abre: '14:00', cierra: '18:00' },
+          ],
+        }),
+      ),
+    ).toMatchObject({ codigo: 'DIA_REPETIDO', status: 422 });
+    expect(
+      await rechazo(
+        e.servicio.reemplazarHorarios('A-101', {
+          horarios: [{ diaSemana: 1, abre: '22:00', cierra: '06:00' }],
+        }),
+      ),
+    ).toMatchObject({ codigo: 'HORARIO_INVALIDO', status: 422 });
+    expect(e.prisma.$transaction).not.toHaveBeenCalled();
+
+    const ninguno = entorno(null);
+    expect(
+      await rechazo(
+        ninguno.servicio.reemplazarHorarios('Z-9', { horarios: [] }),
+      ),
     ).toMatchObject({ status: 404 });
   });
 });
