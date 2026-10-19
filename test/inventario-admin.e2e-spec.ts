@@ -386,4 +386,22 @@ describe.sequential('Administración del inventario contra la base real', () => 
       ]),
     );
   });
+
+  it('un token vigente deja de servir si se desactiva la cuenta o se le quita el rol', async () => {
+    const rol = await prisma.usuarioRol.findFirstOrThrow({
+      where: { usuario: { correo: `e2e-inv-admin-${sufijo}@itp.edu.co` } },
+    });
+    expect((await http.get('/api/bloques').set(auth(admin))).status).toBe(200);
+
+    await prisma.usuarioRol.delete({ where: { id: rol.id } });
+    expect((await http.get('/api/bloques').set(auth(admin))).status).toBe(403);
+
+    await prisma.usuario.update({
+      where: { correo: `e2e-inv-admin-${sufijo}@itp.edu.co` },
+      data: { activo: false },
+    });
+    const res = await http.get('/api/bloques').set(auth(admin));
+    expect(res.status).toBe(401);
+    expect(cuerpo(res).codigo).toBe('NO_AUTENTICADO');
+  });
 });
