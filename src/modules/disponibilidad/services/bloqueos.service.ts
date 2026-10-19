@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { RRule } from 'rrule';
+import rrule from 'rrule';
 import { OrigenFranja, Rol } from '../../../generated/prisma/enums.js';
 import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import { ErrorDominio, noEncontrado } from '../../../shared/errores/error-dominio.js';
@@ -7,6 +7,10 @@ import { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import type { AnularBloqueoDto, BloqueoAnuladoDto } from '../dto/anular-bloqueo.dto.js';
 import type { CrearBloqueoDto } from '../dto/crear-bloqueo.dto.js';
 import type { BloqueoCreadoDto } from '../dto/respuestas.js';
+
+// rrule es CommonJS: en ESM solo se puede importar por defecto.
+const { RRule } = rrule;
+type RRule = InstanceType<typeof RRule>;
 
 export const MAXIMO_OCURRENCIAS = 366;
 const MS_POR_DIA = 86_400_000;
