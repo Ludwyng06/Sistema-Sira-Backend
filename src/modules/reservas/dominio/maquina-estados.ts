@@ -1,4 +1,5 @@
 import type { EstadoSolicitud } from '../../../generated/prisma/enums.js';
+import { ErrorDominio } from '../../../shared/errores/error-dominio.js';
 
 /**
  * Máquina de estados de la solicitud (docs/architecture/02-data-model.md §4).
@@ -80,6 +81,25 @@ export function validarTransicion(desde: EstadoSolicitud, evento: EventoSolicitu
   const destino = TRANSICIONES[desde][evento];
   if (!destino) throw new TransicionInvalida(desde, evento);
   return destino;
+}
+
+/**
+ * Como `validarTransicion`, pero una transición que ya no corresponde (estado cambiado por otra
+ * operación) se responde como conflicto 409 de dominio y nunca como un error 500.
+ */
+export function transicionOConflicto(desde: EstadoSolicitud, evento: EventoSolicitud): EstadoSolicitud {
+  try {
+    return validarTransicion(desde, evento);
+  } catch (error) {
+    if (error instanceof TransicionInvalida) {
+      throw new ErrorDominio(
+        'TRANSICION_INVALIDA',
+        'Esta acción ya no es válida porque la solicitud cambió de estado. Actualiza e intenta de nuevo.',
+        409,
+      );
+    }
+    throw error;
+  }
 }
 
 /** Eventos disponibles en un estado (para mostrar botones en la interfaz). */
