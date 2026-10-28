@@ -36,11 +36,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(carga: CargaJwt): Promise<UsuarioAutenticado> {
     const usuario = await this.prisma.usuario.findUnique({
       where: { id: carga.sub },
-      select: { activo: true, roles: { select: { rol: true } } },
+      select: { activo: true, roles: { select: { rol: true } } ,
+        espaciosResponsable: { where: { archivadoEn: null }, select: { id: true }, take: 1 },
+      },
     });
     if (!usuario?.activo) throw new UnauthorizedException();
 
     const vigentes = new Set<Rol>(usuario.roles.map((fila) => fila.rol));
+    // También se deriva de espacios activos, sin necesitar una fila de UsuarioRol.
+    if (usuario.espaciosResponsable?.length) vigentes.add('RESPONSABLE_ESPACIO');
     return {
       id: carga.sub,
       correo: carga.correo,

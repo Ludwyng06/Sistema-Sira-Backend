@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { JwtService } from '@nestjs/jwt';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as argon2 from 'argon2';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -186,6 +187,85 @@ describe.sequential('Administración del inventario contra la base real', () => 
           .send({ nombre: 'X' })
       ).status,
     ).toBe(404);
+  });
+
+  it('el catálogo público entrega el UUID para consultar disponibilidad sin acceso administrativo', async () => {
+    const swagger = SwaggerModule.createDocument(
+      app,
+      new DocumentBuilder().build(),
+    );
+    const esquemas = swagger.components!.schemas!;
+    expect(esquemas.FotoPortadaDto).toMatchObject({ required: ['url', 'alt'] });
+    expect(esquemas.FotoDto).toMatchObject({
+      properties: { id: { type: 'string' } },
+    });
+    expect(esquemas.TarjetaEspacioDto).toMatchObject({
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        portada: {
+          nullable: true,
+          allOf: [{ $ref: '#/components/schemas/FotoPortadaDto' }],
+        },
+      },
+    });
+    expect(esquemas.FichaEspacioDto).toMatchObject({
+      properties: { id: { type: 'string', format: 'uuid' } },
+    });
+    const ficha = await http.get(`/api/espacios/${codigoEspacio}`);
+    expect(ficha.status).toBe(200);
+    expect(cuerpo(ficha)).toMatchObject({
+      id: espacioId,
+      codigo: codigoEspacio,
+    });
+    expect(cuerpo(ficha)).not.toHaveProperty('responsableId');
+    expect(cuerpo(ficha)).not.toHaveProperty('dependenciaId');
+    expect(cuerpo(ficha)).not.toHaveProperty('aforo');
+    const noCabe = await http
+      .get(`/api/espacios/${codigoEspacio}`)
+      .query({ asistentes: 36 });
+    expect(noCabe.status).toBe(200);
+    expect(cuerpo(noCabe).aforo).toMatchObject({ nivel: 'NO_CABE' });
+    const cabe = await http
+      .get(`/api/espacios/${codigoEspacio}`)
+      .query({ asistentes: 30 });
+    expect(cabe.status).toBe(200);
+    expect(cuerpo(cabe).aforo).toMatchObject({ nivel: 'ADECUADO' });
+    expect(
+      (
+        await http
+          .get(`/api/espacios/${codigoEspacio}`)
+          .query({ asistentes: -1 })
+      ).status,
+    ).toBe(400);
+
+    const listado = await http
+      .get('/api/espacios')
+      .query({ sede: `S${sufijo}` });
+    expect(listado.status).toBe(200);
+    expect(cuerpo(listado).datos).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: espacioId, codigo: codigoEspacio }),
+      ]),
+    );
+    const bloque = await http.get(`/api/sedes/S${sufijo}/bloques/A`);
+    expect(bloque.status).toBe(200);
+    expect(cuerpo(bloque).pisos).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          espacios: expect.arrayContaining([
+            expect.objectContaining({ id: espacioId }),
+          ]),
+        }),
+      ]),
+    );
+
+    const disponibilidad = await http.get('/api/disponibilidad').query({
+      espacioId: cuerpo(ficha).id,
+      desde: '2027-01-04T13:00:00.000Z',
+      hasta: '2027-01-04T14:00:00.000Z',
+    });
+    expect(disponibilidad.status).toBe(200);
+    expect(cuerpo(disponibilidad).espacioId).toBe(espacioId);
   });
 
   it('RN-19: reemplaza el horario de operación y lo valida', async () => {

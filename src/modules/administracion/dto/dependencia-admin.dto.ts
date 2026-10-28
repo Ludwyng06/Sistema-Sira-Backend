@@ -17,7 +17,8 @@ import { aBooleano } from './transformaciones.js';
 const FORMATO_CODIGO = /^[A-Z0-9][A-Z0-9_-]{1,29}$/;
 
 export class CrearDependenciaDto {
-  @ApiProperty({ example: 'ING-SIS', description: 'Código único en mayúsculas, números, guion y guion bajo.' })
+  @ApiProperty({ example: 'ING-SIS', description: 'Código único en mayúsculas, números, guion y guion bajo.' ,
+  })
   @IsString({ message: 'codigo debe ser texto.' })
   @Matches(FORMATO_CODIGO, {
     message: 'codigo debe tener de 2 a 30 caracteres: mayúsculas, números, guion o guion bajo.',
@@ -36,7 +37,8 @@ export class CrearDependenciaDto {
   @MaxLength(40, { message: 'centroCosto no puede superar 40 caracteres.' })
   centroCosto?: string;
 
-  @ApiPropertyOptional({ format: 'uuid', description: 'Usuario activo que es jefe de la dependencia.' })
+  @ApiPropertyOptional({ format: 'uuid', description: 'Usuario activo que es jefe de la dependencia.' ,
+  })
   @IsOptional()
   @IsUUID('all', { message: 'jefeId debe ser un identificador válido.' })
   jefeId?: string;
@@ -50,20 +52,25 @@ export class ActualizarDependenciaDto {
   @MaxLength(120, { message: 'nombre no puede superar 120 caracteres.' })
   nombre?: string;
 
-  @ApiPropertyOptional({ maxLength: 40, nullable: true, description: 'null quita el centro de costo.' })
+  @ApiPropertyOptional({ type: String,
+    maxLength: 40, nullable: true, description: 'null quita el centro de costo.' ,
+  })
   @IsOptional()
   @IsString({ message: 'centroCosto debe ser texto.' })
   @MaxLength(40, { message: 'centroCosto no puede superar 40 caracteres.' })
   centroCosto?: string | null;
 
-  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: 'null quita al jefe.' })
+  @ApiPropertyOptional({ type: String,
+    format: 'uuid', nullable: true, description: 'null quita al jefe.' ,
+  })
   @IsOptional()
   @IsUUID('all', { message: 'jefeId debe ser un identificador válido.' })
   jefeId?: string | null;
 }
 
 export class FiltrosDependenciasDto {
-  @ApiPropertyOptional({ description: 'Solo activas (true) o solo archivadas (false).' })
+  @ApiPropertyOptional({ description: 'Solo activas (true) o solo archivadas (false).' ,
+  })
   @IsOptional()
   @Transform(aBooleano)
   @IsBoolean({ message: 'activa debe ser verdadero o falso.' })

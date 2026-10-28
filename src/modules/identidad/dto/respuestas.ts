@@ -147,7 +147,7 @@ export class UsuarioSesionDto {
 
   @ApiProperty({
     type: [RolAsignadoDto],
-    description: 'Roles asignados al usuario.',
+    description: 'Roles efectivos del usuario; RESPONSABLE_ESPACIO se deriva de Espacio.responsableId.',
   })
   roles!: RolAsignadoDto[];
 

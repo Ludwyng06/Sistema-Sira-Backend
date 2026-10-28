@@ -49,7 +49,7 @@ export class ActualizarEspacioDto {
   @Min(1, { message: 'capacidadPersonas debe ser al menos 1.' })
   capacidadPersonas?: number;
 
-  @ApiPropertyOptional({ nullable: true, example: 48.5 })
+  @ApiPropertyOptional({ type: Number, nullable: true, example: 48.5 })
   @IsOptional()
   @Type(() => Number)
   @IsNumber(
@@ -59,13 +59,13 @@ export class ActualizarEspacioDto {
   @Min(0, { message: 'areaM2 debe ser al menos 0.' })
   areaM2?: number | null;
 
-  @ApiPropertyOptional({ nullable: true, maxLength: 1000 })
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 1000 })
   @IsOptional()
   @IsString({ message: 'descripcion debe ser texto.' })
   @MaxLength(1000, { message: 'descripcion no puede superar 1000 caracteres.' })
   descripcion?: string | null;
 
-  @ApiPropertyOptional({ nullable: true, maxLength: 1000 })
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 1000 })
   @IsOptional()
   @IsString({ message: 'condicionesUso debe ser texto.' })
   @MaxLength(1000, {
@@ -74,6 +74,7 @@ export class ActualizarEspacioDto {
   condicionesUso?: string | null;
 
   @ApiPropertyOptional({
+    type: String,
     nullable: true,
     description: 'Código de la dependencia dueña. null la quita.',
   })
@@ -82,6 +83,7 @@ export class ActualizarEspacioDto {
   dependencia?: string | null;
 
   @ApiPropertyOptional({
+    type: String,
     format: 'uuid',
     nullable: true,
     description: 'Usuario activo responsable. null lo quita.',
@@ -120,6 +122,7 @@ export class ActualizarEspacioDto {
   minutosDesmontaje?: number;
 
   @ApiPropertyOptional({
+    type: Number,
     nullable: true,
     description: 'Depósito fijo en pesos enteros.',
   })
@@ -130,6 +133,7 @@ export class ActualizarEspacioDto {
   depositoValorFijo?: number | null;
 
   @ApiPropertyOptional({
+    type: Number,
     nullable: true,
     description: 'Depósito como porcentaje (0 a 100).',
   })

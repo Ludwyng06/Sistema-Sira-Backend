@@ -385,6 +385,17 @@ describe('ElementosAdminService', () => {
     });
   });
 
+  it('limita el listado del responsable a espacios propios no archivados', async () => {
+    const e = entorno();
+    await e.servicio.listar({ pagina: 1, porPagina: 50 }, {
+      id: ID, correo: 'responsable@itp.edu.co', roles: ['RESPONSABLE_ESPACIO'],
+      dependencias: [], correoVerificado: true, esInstitucional: true,
+    });
+    const where = { espacio: { responsableId: ID, archivadoEn: null } };
+    expect(e.prisma.elemento.findMany).toHaveBeenCalledWith(expect.objectContaining({ where }));
+    expect(e.prisma.elemento.count).toHaveBeenCalledWith({ where });
+  });
+
   it('crea un elemento en un espacio activo', async () => {
     const e = entorno();
     await e.servicio.crear({

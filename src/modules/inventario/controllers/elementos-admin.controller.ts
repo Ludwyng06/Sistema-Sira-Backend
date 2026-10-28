@@ -15,7 +15,10 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
-import { Roles } from '../../../shared/auth/decoradores.js';
+import { Roles ,
+  UsuarioActual,
+  type UsuarioAutenticado,
+} from '../../../shared/auth/decoradores.js';
 import { ApiErrores } from '../../../shared/errores/api-errores.js';
 import { Auditar } from '../../auditoria/auditar.decorador.js';
 import {
@@ -29,24 +32,27 @@ import { ElementosAdminService } from '../services/elementos-admin.service.js';
 
 @ApiTags('Inventario · administración')
 @ApiBearerAuth()
-@Roles('ADMINISTRADOR')
 @Controller('elementos')
 export class ElementosAdminController {
   constructor(private readonly servicio: ElementosAdminService) {}
 
   @Get()
+  @Roles('ADMINISTRADOR', 'RESPONSABLE_ESPACIO')
   @ApiOperation({
     summary: 'Lista los elementos del inventario.',
     description:
-      'Paginada; filtra por espacio y por estado. Incluye los dados de baja.',
+      'Paginada; filtra por espacio y por estado. Incluye los dados de baja. El responsable solo consulta elementos de sus espacios no archivados.\n\nErrores: 404 NO_ENCONTRADO (espacio ajeno o archivado).',
   })
   @ApiOkResponse({ type: PaginaElementosDto })
-  @ApiErrores(400, 401, 403)
-  listar(@Query() filtros: FiltrosElementosDto): Promise<PaginaElementosDto> {
-    return this.servicio.listar(filtros);
+  @ApiErrores(400, 401, 403, 404)
+  listar(@Query() filtros: FiltrosElementosDto,
+    @UsuarioActual() usuario: UsuarioAutenticado,
+  ): Promise<PaginaElementosDto> {
+    return this.servicio.listar(filtros, usuario);
   }
 
   @Get(':id')
+  @Roles('ADMINISTRADOR')
   @ApiOperation({
     summary: 'Detalle de un elemento.',
     description: 'Errores: 404 NO_ENCONTRADO.',
@@ -60,6 +66,7 @@ export class ElementosAdminController {
   }
 
   @Post()
+  @Roles('ADMINISTRADOR')
   @Auditar('ELEMENTO_CREADO', 'Elemento')
   @ApiOperation({
     summary: 'Registra un elemento en un espacio.',
@@ -74,6 +81,7 @@ export class ElementosAdminController {
   }
 
   @Patch(':id')
+  @Roles('ADMINISTRADOR')
   @Auditar('ELEMENTO_ACTUALIZADO', 'Elemento')
   @ApiOperation({
     summary: 'Modifica un elemento, lo traslada de espacio o cambia su estado.',
@@ -90,6 +98,7 @@ export class ElementosAdminController {
   }
 
   @Patch(':id/baja')
+  @Roles('ADMINISTRADOR')
   @Auditar('ELEMENTO_DADO_DE_BAJA', 'Elemento')
   @ApiOperation({
     summary: 'Da de baja un elemento.',

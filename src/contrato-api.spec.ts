@@ -21,7 +21,8 @@ const METODOS = ['get', 'post', 'put', 'patch', 'delete'];
  * Operaciones del módulo de ejemplo (inventario, Fase 0) y la salud: su documentación Swagger la
  * mantiene la rama de inventario y no sigue todavía la convención de descripción con «Errores:».
  */
-const EXENTAS_DE_CONVENCION = [/^\/api\/salud$/, /^\/api\/sedes/, /^\/api\/espacios/, /^\/api\/tipos-espacio$/];
+const EXENTAS_DE_CONVENCION = [/^\/api\/salud$/, /^\/api\/sedes/, /^\/api\/espacios/, /^\/api\/tipos-espacio$/,
+];
 const esExenta = (ruta: string): boolean => EXENTAS_DE_CONVENCION.some((r) => r.test(ruta));
 
 /** Estados que, si una operación los declara, deben explicarse en la línea «Errores:». */
@@ -30,6 +31,11 @@ const ESTADOS_DE_DOMINIO = ['404', '409', '422', '503'];
 describe('Contrato de la API completa (Swagger)', () => {
   let app: INestApplication;
   let rutas: { clave: string; ruta: string; metodo: string; op: Operacion }[];
+  let esquemas: NonNullable<
+    NonNullable<
+      ReturnType<typeof SwaggerModule.createDocument>['components']
+    >['schemas']
+  >;
 
   beforeAll(async () => {
     process.env.DATABASE_URL ??= 'postgresql://prueba:prueba@localhost:5432/prueba';
@@ -49,10 +55,12 @@ describe('Contrato de la API completa (Swagger)', () => {
         .build(),
     );
     const paths = documento.paths as unknown as Documento;
+    esquemas = documento.components!.schemas!;
     rutas = Object.entries(paths).flatMap(([ruta, metodos]) =>
       Object.entries(metodos)
         .filter(([metodo]) => METODOS.includes(metodo))
-        .map(([metodo, op]) => ({ clave: `${metodo.toUpperCase()} ${ruta}`, ruta, metodo, op })),
+        .map(([metodo, op]) => ({ clave: `${metodo.toUpperCase()} ${ruta}`, ruta, metodo, op ,
+        })),
     );
   }, 60_000);
 
@@ -95,6 +103,54 @@ describe('Contrato de la API completa (Swagger)', () => {
     }
   });
 
+  it('los campos escalares anulables de edición se publican como texto o número, nunca como objeto', () => {
+    const escalares: Record<string, { string?: string[]; number?: string[] }> =
+      {
+        ActualizarDependenciaDto: { string: ['centroCosto', 'jefeId'] },
+        ActualizarEspacioDto: {
+          string: [
+            'descripcion',
+            'condicionesUso',
+            'dependencia',
+            'responsableId',
+          ],
+          number: ['areaM2', 'depositoValorFijo', 'depositoPorcentaje'],
+        },
+        ActualizarSedeDto: { string: ['direccion', 'telefono'] },
+        ActualizarBloqueDto: { string: ['descripcion'] },
+        ActualizarTipoEspacioDto: {
+          string: ['icono'],
+          number: ['aforoExigePoliza'],
+        },
+        ActualizarElementoDto: {
+          string: [
+            'placaInventario',
+            'marca',
+            'modelo',
+            'serie',
+            'fechaAdquisicion',
+          ],
+          number: ['valorUnitario', 'vidaUtilMeses'],
+        },
+      };
+    for (const [nombre, tipos] of Object.entries(escalares)) {
+      const esquema = esquemas[nombre];
+      expect(esquema).toHaveProperty('properties');
+      for (const [tipo, campos] of Object.entries(tipos)) {
+        for (const campo of campos) {
+          expect(esquema, `${nombre}.${campo}`).toHaveProperty(
+            `properties.${campo}.type`,
+            tipo,
+          );
+          expect(esquema, `${nombre}.${campo}`).toHaveProperty(
+            `properties.${campo}.nullable`,
+            true,
+          );
+        }
+      }
+    }
+  });
+
   it('ningún endpoint responde 501: todo el contrato publicado está implementado', () => {
     const con501 = rutas.filter((r) => '501' in r.op.responses).map((r) => r.clave);
     expect(con501).toEqual([]);
@@ -102,7 +158,8 @@ describe('Contrato de la API completa (Swagger)', () => {
 
   it('todo endpoint tiene resumen y descripción', () => {
     const sinTexto = rutas
-      .filter((r) => !esExenta(r.ruta) && (!r.op.summary || !(r.op.description ?? '').trim()))
+      .filter((r) => !esExenta(r.ruta) && (!r.op.summary || !(r.op.description ?? '').trim()),
+      )
       .map((r) => r.clave);
     expect(sinTexto).toEqual([]);
   });
@@ -113,7 +170,8 @@ describe('Contrato de la API completa (Swagger)', () => {
       if (esExenta(ruta)) continue;
       for (const [estado, respuesta] of Object.entries(op.responses)) {
         if (Number(estado) < 400) continue;
-        const referencias = Object.values(respuesta.content ?? {}).map((c) => c.schema.$ref);
+        const referencias = Object.values(respuesta.content ?? {}).map((c) => c.schema.$ref,
+        );
         if (!referencias.includes('#/components/schemas/RespuestaErrorDto')) {
           incorrectos.push(`${clave} ${estado}`);
         }
@@ -161,6 +219,7 @@ describe('Contrato de la API completa (Swagger)', () => {
       'POST /api/auth/verificar-correo',
       'POST /api/auth/ingresar',
       'POST /api/tarifas/calcular',
-    ].sort());
+    ].sort(),
+    );
   });
 });

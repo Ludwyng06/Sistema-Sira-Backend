@@ -134,6 +134,7 @@ export class ActualizarSedeDto {
   municipio?: string;
 
   @ApiPropertyOptional({
+    type: String,
     maxLength: 200,
     nullable: true,
     description: 'null quita la dirección.',
@@ -144,6 +145,7 @@ export class ActualizarSedeDto {
   direccion?: string | null;
 
   @ApiPropertyOptional({
+    type: String,
     maxLength: 40,
     nullable: true,
     description: 'null quita el teléfono.',
@@ -255,6 +257,7 @@ export class ActualizarBloqueDto {
   nombre?: string;
 
   @ApiPropertyOptional({
+    type: String,
     maxLength: 1000,
     nullable: true,
     description: 'null quita la descripción.',
@@ -406,6 +409,7 @@ export class ActualizarTipoEspacioDto {
   anticipacionEnHabiles?: boolean;
 
   @ApiPropertyOptional({
+    type: Number,
     minimum: 1,
     nullable: true,
     description: 'null quita la exigencia de póliza.',
@@ -417,6 +421,7 @@ export class ActualizarTipoEspacioDto {
   aforoExigePoliza?: number | null;
 
   @ApiPropertyOptional({
+    type: String,
     maxLength: 40,
     nullable: true,
     description: 'null quita el icono.',
@@ -590,6 +595,7 @@ export class ActualizarElementoDto {
   espacioId?: string;
 
   @ApiPropertyOptional({
+    type: String,
     maxLength: 60,
     nullable: true,
     description: 'null quita la placa.',
@@ -600,19 +606,19 @@ export class ActualizarElementoDto {
   @MaxLength(60, { message: 'placaInventario no puede superar 60 caracteres.' })
   placaInventario?: string | null;
 
-  @ApiPropertyOptional({ maxLength: 60, nullable: true })
+  @ApiPropertyOptional({ type: String, maxLength: 60, nullable: true })
   @IsOptional()
   @IsString({ message: 'marca debe ser texto.' })
   @MaxLength(60, { message: 'marca no puede superar 60 caracteres.' })
   marca?: string | null;
 
-  @ApiPropertyOptional({ maxLength: 60, nullable: true })
+  @ApiPropertyOptional({ type: String, maxLength: 60, nullable: true })
   @IsOptional()
   @IsString({ message: 'modelo debe ser texto.' })
   @MaxLength(60, { message: 'modelo no puede superar 60 caracteres.' })
   modelo?: string | null;
 
-  @ApiPropertyOptional({ maxLength: 60, nullable: true })
+  @ApiPropertyOptional({ type: String, maxLength: 60, nullable: true })
   @IsOptional()
   @IsString({ message: 'serie debe ser texto.' })
   @MaxLength(60, { message: 'serie no puede superar 60 caracteres.' })
@@ -647,6 +653,7 @@ export class ActualizarElementoDto {
   estado?: EstadoElemento;
 
   @ApiPropertyOptional({
+    type: Number,
     minimum: 0,
     nullable: true,
     description: 'Pesos enteros.',
@@ -658,7 +665,7 @@ export class ActualizarElementoDto {
   @Max(2_000_000_000, { message: 'valorUnitario supera el máximo permitido.' })
   valorUnitario?: number | null;
 
-  @ApiPropertyOptional({ nullable: true, example: '2024-03-15' })
+  @ApiPropertyOptional({ type: String, nullable: true, example: '2024-03-15' })
   @IsOptional()
   @IsDateString(
     { strict: true },
@@ -666,7 +673,7 @@ export class ActualizarElementoDto {
   )
   fechaAdquisicion?: string | null;
 
-  @ApiPropertyOptional({ minimum: 1, nullable: true })
+  @ApiPropertyOptional({ type: Number, minimum: 1, nullable: true })
   @IsOptional()
   @Type(() => Number)
   @IsInt({ message: 'vidaUtilMeses debe ser un número entero.' })

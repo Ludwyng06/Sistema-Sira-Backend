@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '../../../generated/prisma/client.js';
+import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import {
   ErrorDominio,
   noEncontrado,
@@ -66,8 +67,17 @@ function fecha(valor: string | null | undefined): Date | null | undefined {
 export class ElementosAdminService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async listar(filtros: FiltrosElementosDto): Promise<PaginaElementosDto> {
+  async listar(filtros: FiltrosElementosDto, usuario?: UsuarioAutenticado): Promise<PaginaElementosDto> {
+    const esResponsable = usuario !== undefined && !usuario.roles.includes('ADMINISTRADOR');
+    const alcance = esResponsable ? { responsableId: usuario.id, archivadoEn: null } : undefined;
+    if (alcance && filtros.espacioId) {
+      const espacio = await this.prisma.espacio.findFirst({
+        where: { id: filtros.espacioId, ...alcance }, select: { id: true },
+      });
+      if (!espacio) throw noEncontrado('El espacio');
+    }
     const where: Prisma.ElementoWhereInput = {
+      ...(alcance ? { espacio: alcance } : {}),
       ...(filtros.espacioId ? { espacioId: filtros.espacioId } : {}),
       ...(filtros.estado ? { estado: filtros.estado } : {}),
     };

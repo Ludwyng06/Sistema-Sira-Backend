@@ -5,6 +5,7 @@ import sharp from 'sharp';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Rol } from '../src/generated/prisma/enums.js';
+import { SesionService } from '../src/modules/identidad/services/sesion.service.js';
 import { RecordatoriosService } from '../src/modules/reservas/jobs/recordatorios.service.js';
 import { VencimientosService } from '../src/modules/reservas/jobs/vencimientos.service.js';
 import { PrismaService } from '../src/shared/prisma/prisma.service.js';
@@ -44,17 +45,22 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
   let ordenId = '';
   let actaEntregaId = '';
 
-  const auth = (clave: string) => ({ Authorization: `Bearer ${tokens[clave]}` });
+  const auth = (clave: string) => ({ Authorization: `Bearer ${tokens[clave]}` ,
+    });
   const cuerpo = (res: { body: unknown }) => res.body as Record<string, unknown>;
 
-  async function crearUsuarioInterno(correo: string, roles: { rol: Rol; dependenciaId?: string }[]) {
+  async function crearUsuarioInterno(correo: string, roles: { rol: Rol; dependenciaId?: string }[],
+    ) {
     const usuario = await prisma.usuario.create({
       data: {
         correo,
-        hashContrasena: await argon2.hash(CONTRASENA, { type: argon2.argon2id }),
+        hashContrasena: await argon2.hash(CONTRASENA, { type: argon2.argon2id ,
+          }),
         correoVerificado: true,
         esInstitucional: true,
-        roles: { create: roles.map((r) => ({ rol: r.rol, dependenciaId: r.dependenciaId ?? null })) },
+        roles: { create: roles.map((r) => ({ rol: r.rol, dependenciaId: r.dependenciaId ?? null ,
+            })) ,
+          },
       },
       include: { roles: true },
     });
@@ -91,13 +97,15 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     const item = await http
       .post(`/api/solicitudes/${id}/reservas`)
       .set(auth(quien))
-      .send({ espacioId, inicio: hora(fecha, desde), fin: hora(fecha, hasta) });
+      .send({ espacioId, inicio: hora(fecha, desde), fin: hora(fecha, hasta) ,
+        });
     expect(item.status).toBe(201);
     return id;
   }
 
   async function aprobarSolicitud(id: string): Promise<void> {
-    expect((await http.post(`/api/solicitudes/${id}/enviar`).set(auth('solicitante'))).status).toBe(200);
+    expect((await http.post(`/api/solicitudes/${id}/enviar`).set(auth('solicitante'))).status,
+      ).toBe(200);
     for (const [quien, tipo] of [
       ['responsable', 'AVAL'],
       ['aprobador', 'APROBACION'],
@@ -115,20 +123,24 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     prisma = app.get(PrismaService);
     http = request(app.getHttpServer());
 
-    const tipo = await prisma.tipoEspacio.findFirstOrThrow({ where: { activo: true } });
-    const bloque = await prisma.bloque.findFirstOrThrow({ where: { activo: true } });
+    const tipo = await prisma.tipoEspacio.findFirstOrThrow({ where: { activo: true } ,
+      });
+    const bloque = await prisma.bloque.findFirstOrThrow({ where: { activo: true } ,
+      });
     const dependencia = await prisma.dependencia.create({
       data: { codigo: `E2E${sufijo}`, nombre: `Dependencia E2E ${sufijo}` },
     });
 
     const responsable = await crearUsuarioInterno(`e2e-resp-${sufijo}@itp.edu.co`, [
-      { rol: Rol.RESPONSABLE_ESPACIO },
-    ]);
+      { rol: Rol.SOLICITANTE }],
+    );
     const aprobador = await crearUsuarioInterno(`e2e-apr-${sufijo}@itp.edu.co`, [
-      { rol: Rol.APROBADOR, dependenciaId: dependencia.id },
-    ]);
-    const tesoreria = await crearUsuarioInterno(`e2e-tes-${sufijo}@itp.edu.co`, [{ rol: Rol.TESORERIA }]);
-    const admin = await crearUsuarioInterno(`e2e-adm-${sufijo}@itp.edu.co`, [{ rol: Rol.ADMINISTRADOR }]);
+      { rol: Rol.APROBADOR, dependenciaId: dependencia.id }],
+    );
+    const tesoreria = await crearUsuarioInterno(`e2e-tes-${sufijo}@itp.edu.co`, [{ rol: Rol.TESORERIA }],
+      );
+    const admin = await crearUsuarioInterno(`e2e-adm-${sufijo}@itp.edu.co`, [{ rol: Rol.ADMINISTRADOR },
+      ]);
     tokens.responsable = responsable.token;
     tokens.aprobador = aprobador.token;
     tokens.tesoreria = tesoreria.token;
@@ -137,7 +149,8 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     const interno = await prisma.usuario.create({
       data: {
         correo: `e2e-int-${sufijo}@itp.edu.co`,
-        hashContrasena: await argon2.hash(CONTRASENA, { type: argon2.argon2id }),
+        hashContrasena: await argon2.hash(CONTRASENA, { type: argon2.argon2id ,
+          }),
         correoVerificado: true,
         esInstitucional: true,
         roles: { create: [{ rol: Rol.SOLICITANTE }] },
@@ -177,7 +190,13 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
       },
     });
     espacioId = espacio.id;
-    await prisma.tarifa.create({
+    tokens.responsable = (
+        await app.get(SesionService).iniciar(responsable.id, {
+          ip: null,
+          userAgent: null,
+        })
+      ).accessToken;
+      await prisma.tarifa.create({
       data: {
         espacioId,
         tipoSolicitante: 'EMPRESA',
@@ -215,7 +234,8 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
   });
 
   it('registra una empresa, verifica el correo y entra con la cookie de refresco', async () => {
-    const politica = await prisma.parametro.findUniqueOrThrow({ where: { clave: 'version_politica_datos' } });
+    const politica = await prisma.parametro.findUniqueOrThrow({ where: { clave: 'version_politica_datos' } ,
+      });
     const registro = await http.post('/api/auth/registro').send({
       correo: correoSolicitante,
       contrasena: CONTRASENA,
@@ -254,7 +274,8 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
 
     const enviada = await http.post(`/api/solicitudes/${solicitudId}/enviar`).set(auth('solicitante'));
     expect(enviada.status).toBe(200);
-    expect(cuerpo(enviada)).toMatchObject({ estado: 'EN_REVISION', esExenta: false });
+    expect(cuerpo(enviada)).toMatchObject({ estado: 'EN_REVISION', esExenta: false ,
+      });
     expect(String(cuerpo(enviada).consecutivo)).toMatch(/^SOL-\d{4}-\d{4,}$/);
 
     const franja = await prisma.franjaOcupada.findFirstOrThrow({
@@ -274,7 +295,8 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     const franjas = cuerpo(res).franjas as Record<string, unknown>[];
     expect(franjas).toHaveLength(1);
     expect(franjas[0]).toMatchObject({ estado: 'RETENIDA' });
-    expect(Object.keys(franjas[0]!).sort()).toEqual(['estado', 'etiqueta', 'fin', 'inicio']);
+    expect(Object.keys(franjas[0]!).sort()).toEqual(['estado', 'etiqueta', 'fin', 'inicio',
+      ]);
   });
 
   it('RN-01: una segunda solicitud sobre el mismo horario recibe 409 con los conflictos', async () => {
@@ -284,11 +306,13 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     expect(cuerpo(res).codigo).toBe('FRANJA_NO_DISPONIBLE');
     const detalles = cuerpo(res).detalles as { conflictos: unknown[] };
     expect(detalles.conflictos.length).toBeGreaterThan(0);
-    const sugerencias = (cuerpo(res).detalles as { sugerencias: { espacios: { espacioId: string }[] }[] })
+    const sugerencias = (cuerpo(res).detalles as { sugerencias: { espacios: { espacioId: string }[] }[] ;
+        })
       .sugerencias;
     expect(sugerencias).toHaveLength(1);
     expect(sugerencias[0]?.espacios.length).toBeGreaterThan(0);
-    expect(sugerencias[0]?.espacios.some((e) => e.espacioId === espacioId)).toBe(false);
+    expect(sugerencias[0]?.espacios.some((e) => e.espacioId === espacioId),
+      ).toBe(false);
   });
 
   it('RNF-05: dos envíos simultáneos sobre la misma franja libre, exactamente uno confirma', async () => {
@@ -300,13 +324,41 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     ]);
     expect([ra.status, rb.status].sort()).toEqual([200, 409]);
     const activas = await prisma.franjaOcupada.count({
-      where: { espacioId, estado: { not: 'LIBERADA' }, inicio: { gte: new Date(hora(JUEVES, '00:00')) } },
+      where: { espacioId, estado: { not: 'LIBERADA' }, inicio: { gte: new Date(hora(JUEVES, '00:00')) } ,
+        },
     });
     expect(activas).toBe(1);
   });
 
   it('UC-02: la aprobación exige el aval; con aval emite la cotización', async () => {
-    const sinAval = await http
+    const yo = await http.get('/api/auth/yo').set(auth('responsable'));
+      expect(yo.status).toBe(200);
+      expect(cuerpo(yo).roles).toContainEqual({
+        rol: 'RESPONSABLE_ESPACIO',
+        dependenciaId: null,
+      });
+      const responsables = await http
+        .get('/api/usuarios')
+        .query({ rol: 'RESPONSABLE_ESPACIO', busqueda: `e2e-resp-${sufijo}` })
+        .set(auth('admin'));
+      expect(responsables.status).toBe(200);
+      expect(cuerpo(responsables).datos).toEqual([
+        expect.objectContaining({
+          id: cuerpo(yo).id,
+          roles: expect.arrayContaining([
+            { rol: 'RESPONSABLE_ESPACIO', dependenciaId: null },
+          ]),
+        }),
+      ]);
+      const bandejaResponsable = await http
+        .get('/api/solicitudes')
+        .query({ ambito: 'BANDEJA' })
+        .set(auth('responsable'));
+      expect(bandejaResponsable.status).toBe(200);
+      expect(cuerpo(bandejaResponsable).datos).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: solicitudId })]),
+      );
+      const sinAval = await http
       .post(`/api/solicitudes/${solicitudId}/decisiones`)
       .set(auth('aprobador'))
       .send({ tipo: 'APROBACION', resultado: 'APROBADA' });
@@ -326,11 +378,13 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
       .send({ tipo: 'APROBACION', resultado: 'APROBADA' });
     expect(aprobacion.status).toBe(200);
     expect(cuerpo(aprobacion)).toMatchObject({ estadoSolicitud: 'COTIZADA' });
-    expect(String(cuerpo(aprobacion).cotizacion)).toMatch(/^COT-\d{4}-\d{4,}$/);
+    expect(String(cuerpo(aprobacion).cotizacion)).toMatch(/^COT-\d{4}-\d{4,}$/,
+      );
 
     const detalle = await http.get(`/api/solicitudes/${solicitudId}`).set(auth('aprobador'));
     expect(detalle.status).toBe(200);
-    expect(cuerpo(detalle).cotizacion).toMatchObject({ subtotal: 80_000, total: 80_000 });
+    expect(cuerpo(detalle).cotizacion).toMatchObject({ subtotal: 80_000, total: 80_000 ,
+      });
   });
 
   it('tesorería ve la solicitud; el solicitante no tiene bandeja de revisión', async () => {
@@ -373,16 +427,19 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     const soporte = await http
       .post(`/api/pagos/ordenes/${ordenId}/soporte`)
       .set(auth('solicitante'))
-      .attach('archivo', PDF, { filename: 'consignacion.pdf', contentType: 'application/pdf' });
+      .attach('archivo', PDF, { filename: 'consignacion.pdf', contentType: 'application/pdf' ,
+        });
     expect(soporte.status).toBe(200);
-    expect(cuerpo(soporte)).toMatchObject({ estado: 'EN_VERIFICACION', tieneSoporte: true });
+    expect(cuerpo(soporte)).toMatchObject({ estado: 'EN_VERIFICACION', tieneSoporte: true ,
+      });
 
     const verificacion = await http
       .post(`/api/pagos/ordenes/${ordenId}/verificacion`)
       .set(auth('tesoreria'))
       .send({ resultado: 'APROBADA' });
     expect(verificacion.status).toBe(200);
-    expect(cuerpo(verificacion)).toEqual({ estadoOrden: 'APROBADA', estadoSolicitud: 'CONFIRMADA' });
+    expect(cuerpo(verificacion)).toEqual({ estadoOrden: 'APROBADA', estadoSolicitud: 'CONFIRMADA' ,
+      });
 
     const franja = await prisma.franjaOcupada.findFirstOrThrow({
       where: { espacioId, reservaItem: { solicitudId } },
@@ -400,16 +457,75 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
   });
 
   it('UC-05: acta de entrega (EN_USO) y de devolución (FINALIZADA) con checklist', async () => {
-    const entrega = await http
+    const checklist = await http
+        .get('/api/elementos')
+        .query({ espacioId, estado: 'EN_SERVICIO' })
+        .set(auth('responsable'));
+      expect(checklist.status).toBe(200);
+      expect(cuerpo(checklist).datos).toEqual([
+        expect.objectContaining({
+          id: elementoId,
+          nombre: 'Videobeam',
+          cantidad: 1,
+          estadoFisico: 'BUENO',
+        }),
+      ]);
+      expect(
+        (
+          await http
+            .get('/api/elementos')
+            .query({ espacioId: randomUUID() })
+            .set(auth('responsable'))
+        ).status,
+      ).toBe(404);
+      const ajeno = await prisma.espacio.findFirstOrThrow({
+        where: { id: { not: espacioId } },
+      });
+      expect(
+        (
+          await http
+            .get('/api/elementos')
+            .query({ espacioId: ajeno.id })
+            .set(auth('responsable'))
+        ).status,
+      ).toBe(404);
+      expect(
+        (await http.get('/api/elementos').set(auth('solicitante'))).status,
+      ).toBe(403);
+      expect(
+        (
+          await http
+            .get(`/api/elementos/${elementoId}`)
+            .set(auth('responsable'))
+        ).status,
+      ).toBe(403);
+      for (const [metodo, ruta] of [
+        ['post', '/api/elementos'],
+        ['patch', `/api/elementos/${elementoId}`],
+        ['patch', `/api/elementos/${elementoId}/baja`],
+      ] as const) {
+        expect(
+          (await http[metodo](ruta).set(auth('responsable')).send({})).status,
+        ).toBe(403);
+      }
+      const entrega = await http
       .post('/api/actas')
       .set(auth('responsable'))
       .send({
         solicitudId,
         tipo: 'ENTREGA',
-        checklist: [{ elementoId, cantidadEncontrada: 1, estadoFisico: 'BUENO' }],
+        checklist: (
+            cuerpo(checklist).datos as {
+              id: string;
+              cantidad: number;
+              estadoFisico: string;
+            }[]
+          ).map((e) => ({ elementoId: e.id, cantidadEncontrada: e.cantidad, estadoFisico: e.estadoFisico,
+          })),
       });
     expect(entrega.status).toBe(201);
-    expect(cuerpo(entrega)).toMatchObject({ estadoSolicitud: 'EN_USO', tipo: 'ENTREGA' });
+    expect(cuerpo(entrega)).toMatchObject({ estadoSolicitud: 'EN_USO', tipo: 'ENTREGA' ,
+      });
     actaEntregaId = cuerpo(entrega).id as string;
 
     const repetida = await http
@@ -418,7 +534,8 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
       .send({
         solicitudId,
         tipo: 'ENTREGA',
-        checklist: [{ elementoId, cantidadEncontrada: 1, estadoFisico: 'BUENO' }],
+        checklist: [{ elementoId, cantidadEncontrada: 1, estadoFisico: 'BUENO' },
+          ],
       });
     expect(repetida.status).toBe(409);
 
@@ -428,7 +545,8 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
       .send({
         solicitudId,
         tipo: 'DEVOLUCION',
-        checklist: [{ elementoId, cantidadEncontrada: 1, estadoFisico: 'BUENO' }],
+        checklist: [{ elementoId, cantidadEncontrada: 1, estadoFisico: 'BUENO' },
+          ],
       });
     expect(devolucion.status).toBe(201);
     expect(cuerpo(devolucion).estadoSolicitud).toBe('FINALIZADA');
@@ -466,7 +584,8 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
       .query({ entidad: 'Solicitud', entidadId: solicitudId, porPagina: 100 })
       .set(auth('admin'));
     expect(res.status).toBe(200);
-    const acciones = (cuerpo(res).datos as { accion: string }[]).map((r) => r.accion);
+    const acciones = (cuerpo(res).datos as { accion: string }[]).map((r) => r.accion,
+      );
     expect(acciones).toEqual(
       expect.arrayContaining(['SOLICITUD_ENVIADA', 'SOLICITUD_DECIDIDA']),
     );
@@ -475,11 +594,12 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
   it('el tablero cuenta las solicitudes del periodo y el recaudo aprobado', async () => {
     const res = await http.get('/api/reportes/tablero').set(auth('admin'));
     expect(res.status).toBe(200);
-    const estados = (cuerpo(res).solicitudesPorEstado as { estado: string; cantidad: number }[]).map(
-      (e) => e.estado,
-    );
+    const estados = (cuerpo(res).solicitudesPorEstado as { estado: string; cantidad: number ;
+        }[]).map(
+      (e) => e.estado);
     expect(estados).toContain('FINALIZADA');
-    expect((cuerpo(res).recaudo as { total: number }).total).toBeGreaterThanOrEqual(80_000);
+    expect((cuerpo(res).recaudo as { total: number }).total,
+      ).toBeGreaterThanOrEqual(80_000);
   });
 
   it('las exportaciones entregan CSV y XLSX reales, y el recaudo no se exporta al aprobador', async () => {
@@ -495,7 +615,8 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     expect(csv.status).toBe(200);
     expect(csv.headers['content-type']).toContain('text/csv');
     const texto = (csv.body as Buffer).toString('utf8');
-    expect(texto.startsWith('﻿Consecutivo,Estado,Evento,Solicitante')).toBe(true);
+    expect(texto.startsWith('﻿Consecutivo,Estado,Evento,Solicitante')).toBe(true,
+      );
     expect(texto).toContain(`Evento E2E ${sufijo}`);
 
     const xlsx = await http
@@ -519,7 +640,8 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
 
   it('RN-02d: un pago tardío con las franjas libres confirma la solicitud vencida', async () => {
     const id = await nuevaSolicitud(VIERNES, '14:00', '16:00');
-    expect((await http.post(`/api/solicitudes/${id}/enviar`).set(auth('solicitante'))).status).toBe(200);
+    expect((await http.post(`/api/solicitudes/${id}/enviar`).set(auth('solicitante'))).status,
+      ).toBe(200);
     for (const [quien, tipo] of [
       ['responsable', 'AVAL'],
       ['aprobador', 'APROBACION'],
@@ -534,20 +656,26 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     expect(orden.status).toBe(201);
     const ordenTardia = cuerpo(orden).id as string;
 
-    await prisma.solicitud.update({ where: { id }, data: { venceEn: new Date(Date.now() - 60_000) } });
+    await prisma.solicitud.update({ where: { id }, data: { venceEn: new Date(Date.now() - 60_000) } ,
+      });
     await app.get(VencimientosService).ejecutar();
-    const vencida = await prisma.solicitud.findUniqueOrThrow({ where: { id } });
+    const vencida = await prisma.solicitud.findUniqueOrThrow({ where: { id } ,
+      });
     expect(vencida.estado).toBe('VENCIDA');
-    expect((await prisma.ordenPago.findUniqueOrThrow({ where: { id: ordenTardia } })).estado).toBe('VENCIDA');
+    expect((await prisma.ordenPago.findUniqueOrThrow({ where: { id: ordenTardia } ,
+          })).estado,
+      ).toBe('VENCIDA');
 
     const tardio = await http
       .post(`/api/pagos/ordenes/${ordenTardia}/pago-tardio`)
       .set(auth('tesoreria'))
       .send({ observacion: 'Consignación recibida fuera de plazo.' });
     expect(tardio.status).toBe(200);
-    expect(cuerpo(tardio)).toMatchObject({ resultado: 'CONFIRMADA', estadoSolicitud: 'CONFIRMADA' });
+    expect(cuerpo(tardio)).toMatchObject({ resultado: 'CONFIRMADA', estadoSolicitud: 'CONFIRMADA' ,
+      });
 
-    const franja = await prisma.franjaOcupada.findFirstOrThrow({ where: { reservaItem: { solicitudId: id } } });
+    const franja = await prisma.franjaOcupada.findFirstOrThrow({ where: { reservaItem: { solicitudId: id } } ,
+      });
     expect(franja.estado).toBe('CONFIRMADA');
 
     const repetido = await http
@@ -558,10 +686,12 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
   });
 
   it('RN-07/RN-08: la solicitud institucional avalada se confirma sin pago, con valor de referencia', async () => {
-    const id = await nuevaSolicitud(MARTES, '08:00', '10:00', 'interno', { declaraUsoInstitucional: true });
+    const id = await nuevaSolicitud(MARTES, '08:00', '10:00', 'interno', { declaraUsoInstitucional: true ,
+      });
     const enviada = await http.post(`/api/solicitudes/${id}/enviar`).set(auth('interno'));
     expect(enviada.status).toBe(200);
-    expect(cuerpo(enviada)).toMatchObject({ esExenta: true, tipoTarifa: 'INTERNO', estado: 'EN_REVISION' });
+    expect(cuerpo(enviada)).toMatchObject({ esExenta: true, tipoTarifa: 'INTERNO', estado: 'EN_REVISION' ,
+      });
 
     const aval = await http
       .post(`/api/solicitudes/${id}/decisiones`)
@@ -576,19 +706,22 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     expect(cuerpo(aprobacion).estadoSolicitud).toBe('CONFIRMADA');
 
     const detalle = await http.get(`/api/solicitudes/${id}`).set(auth('interno'));
-    expect(cuerpo(detalle).cotizacion).toMatchObject({ total: 0, valorReferencia: 30_000 });
+    expect(cuerpo(detalle).cotizacion).toMatchObject({ total: 0, valorReferencia: 30_000 ,
+      });
 
     const orden = await http.post('/api/pagos/ordenes').set(auth('interno')).send({ solicitudId: id });
     expect(orden.status).toBe(422);
     expect(cuerpo(orden).codigo).toBe('SOLICITUD_EXENTA');
 
-    const franja = await prisma.franjaOcupada.findFirstOrThrow({ where: { reservaItem: { solicitudId: id } } });
+    const franja = await prisma.franjaOcupada.findFirstOrThrow({ where: { reservaItem: { solicitudId: id } } ,
+      });
     expect(franja.estado).toBe('CONFIRMADA');
   });
 
   it('UC-02: una solicitud devuelta libera la franja, se corrige y se puede reenviar', async () => {
     const id = await nuevaSolicitud(LUNES, '14:00', '16:00');
-    expect((await http.post(`/api/solicitudes/${id}/enviar`).set(auth('solicitante'))).status).toBe(200);
+    expect((await http.post(`/api/solicitudes/${id}/enviar`).set(auth('solicitante'))).status,
+      ).toBe(200);
 
     const sinMotivo = await http
       .post(`/api/solicitudes/${id}/decisiones`)
@@ -600,11 +733,13 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     const devuelta = await http
       .post(`/api/solicitudes/${id}/decisiones`)
       .set(auth('responsable'))
-      .send({ tipo: 'AVAL', resultado: 'DEVUELTA', motivo: 'Falta el responsable en sitio.' });
+      .send({ tipo: 'AVAL', resultado: 'DEVUELTA', motivo: 'Falta el responsable en sitio.' ,
+        });
     expect(devuelta.status).toBe(200);
     expect(cuerpo(devuelta).estadoSolicitud).toBe('BORRADOR');
     const liberada = await prisma.franjaOcupada.findFirstOrThrow({
-      where: { espacioId, inicio: { gte: new Date(hora(LUNES, '00:00')) }, estado: 'LIBERADA' },
+      where: { espacioId, inicio: { gte: new Date(hora(LUNES, '00:00')) }, estado: 'LIBERADA' ,
+        },
     });
     expect(liberada.reservaItemId).toBeNull();
 
@@ -627,7 +762,8 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     await http
       .post(`/api/pagos/ordenes/${ordenId}/soporte`)
       .set(auth('solicitante'))
-      .attach('archivo', PDF, { filename: 'consignacion.pdf', contentType: 'application/pdf' });
+      .attach('archivo', PDF, { filename: 'consignacion.pdf', contentType: 'application/pdf' ,
+        });
     const verificada = await http
       .post(`/api/pagos/ordenes/${ordenId}/verificacion`)
       .set(auth('tesoreria'))
@@ -651,7 +787,8 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
       valorReembolso: 40_000,
       canceladaPorInstitucion: false,
     });
-    const franja = await prisma.franjaOcupada.findFirstOrThrow({ where: { reservaItem: { solicitudId: id } } });
+    const franja = await prisma.franjaOcupada.findFirstOrThrow({ where: { reservaItem: { solicitudId: id } } ,
+      });
     expect(franja.estado).toBe('LIBERADA');
 
     const otra = await nuevaSolicitud(SABADO, '14:00', '16:00');
@@ -667,12 +804,15 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     const ordenId = cuerpo(orden).id as string;
     const valor = cuerpo(orden).valor as number;
 
-    await prisma.solicitud.update({ where: { id: a }, data: { venceEn: new Date(Date.now() - 60_000) } });
+    await prisma.solicitud.update({ where: { id: a }, data: { venceEn: new Date(Date.now() - 60_000) } ,
+      });
     await app.get(VencimientosService).ejecutar();
-    expect((await prisma.solicitud.findUniqueOrThrow({ where: { id: a } })).estado).toBe('VENCIDA');
+    expect((await prisma.solicitud.findUniqueOrThrow({ where: { id: a } })).estado,
+      ).toBe('VENCIDA');
 
     const b = await nuevaSolicitud(MARTES, '14:00', '16:00');
-    expect((await http.post(`/api/solicitudes/${b}/enviar`).set(auth('solicitante'))).status).toBe(200);
+    expect((await http.post(`/api/solicitudes/${b}/enviar`).set(auth('solicitante'))).status,
+      ).toBe(200);
 
     const tardio = await http
       .post(`/api/pagos/ordenes/${ordenId}/pago-tardio`)
@@ -685,21 +825,28 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
       valorReembolso: valor,
     });
 
-    const reembolso = await prisma.reembolso.findFirstOrThrow({ where: { ordenPagoId: ordenId } });
-    expect(reembolso).toMatchObject({ valor, estado: 'SOLICITADO', motivo: 'PAGO_TARDIO_SIN_FRANJA_LIBRE' });
-    expect((await prisma.solicitud.findUniqueOrThrow({ where: { id: a } })).estado).toBe('VENCIDA');
-    expect((await prisma.solicitud.findUniqueOrThrow({ where: { id: b } })).estado).toBe('EN_REVISION');
+    const reembolso = await prisma.reembolso.findFirstOrThrow({ where: { ordenPagoId: ordenId } ,
+      });
+    expect(reembolso).toMatchObject({ valor, estado: 'SOLICITADO', motivo: 'PAGO_TARDIO_SIN_FRANJA_LIBRE' ,
+      });
+    expect((await prisma.solicitud.findUniqueOrThrow({ where: { id: a } })).estado,
+      ).toBe('VENCIDA');
+    expect((await prisma.solicitud.findUniqueOrThrow({ where: { id: b } })).estado,
+      ).toBe('EN_REVISION');
   });
 
   it('RN-02a: recuerda a las 24 h, escala a las 48 h y no repite los avisos', async () => {
     const id = await nuevaSolicitud(JUEVES, '08:00', '10:00');
-    expect((await http.post(`/api/solicitudes/${id}/enviar`).set(auth('solicitante'))).status).toBe(200);
+    expect((await http.post(`/api/solicitudes/${id}/enviar`).set(auth('solicitante'))).status,
+      ).toBe(200);
     const responsableId = (await prisma.espacio.findUniqueOrThrow({ where: { id: espacioId } })).responsableId;
     const avisos = (accion: string) =>
-      prisma.bitacora.count({ where: { entidad: 'Solicitud', entidadId: id, accion } });
+      prisma.bitacora.count({ where: { entidad: 'Solicitud', entidadId: id, accion } ,
+        });
     const recordatorios = () =>
       prisma.notificacion.count({
-        where: { usuarioId: responsableId ?? '', titulo: { contains: 'Recordatorio' } },
+        where: { usuarioId: responsableId ?? '', titulo: { contains: 'Recordatorio' } ,
+          },
       });
     const antes = await recordatorios();
 
@@ -746,9 +893,11 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
       .post(url)
       .set(auth('solicitante'))
       .field('tipo', 'POLIZA')
-      .attach('archivo', PDF, { filename: '../../poliza.pdf', contentType: 'application/pdf' });
+      .attach('archivo', PDF, { filename: '../../poliza.pdf', contentType: 'application/pdf' ,
+        });
     expect(subido.status).toBe(201);
-    expect(cuerpo(subido)).toMatchObject({ tipo: 'POLIZA', nombre: 'poliza.pdf' });
+    expect(cuerpo(subido)).toMatchObject({ tipo: 'POLIZA', nombre: 'poliza.pdf' ,
+      });
     const documentoId = cuerpo(subido).id as string;
 
     const lista = await http.get(url).set(auth('solicitante'));
@@ -768,34 +917,42 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     expect(archivo.status).toBe(200);
     expect((archivo.body as Buffer).equals(PDF)).toBe(true);
 
-    expect((await http.delete(`${url}/${documentoId}`).set(auth('solicitante'))).status).toBe(204);
-    expect(((await http.get(url).set(auth('solicitante'))).body as unknown[]).length).toBe(0);
+    expect((await http.delete(`${url}/${documentoId}`).set(auth('solicitante'))).status,
+      ).toBe(204);
+    expect(((await http.get(url).set(auth('solicitante'))).body as unknown[]).length,
+      ).toBe(0);
   });
 
   it('fotos: sube una imagen, genera las variantes WebP, el inventario público la muestra y se elimina', async () => {
-    const imagen = await sharp({ create: { width: 2000, height: 1000, channels: 3, background: '#2a6f4e' } })
+    const imagen = await sharp({ create: { width: 2000, height: 1000, channels: 3, background: '#2a6f4e' ,
+        } ,
+      })
       .jpeg()
       .toBuffer();
     const sinTexto = await http
       .post(`/api/espacios/${espacioId}/fotos`)
       .set(auth('admin'))
-      .attach('archivo', imagen, { filename: 'aula.jpg', contentType: 'image/jpeg' });
+      .attach('archivo', imagen, { filename: 'aula.jpg', contentType: 'image/jpeg' ,
+        });
     expect(sinTexto.status).toBe(400);
 
     const ajeno = await http
       .post(`/api/espacios/${espacioId}/fotos`)
       .set(auth('solicitante'))
       .field('textoAlternativo', 'Aula')
-      .attach('archivo', imagen, { filename: 'aula.jpg', contentType: 'image/jpeg' });
+      .attach('archivo', imagen, { filename: 'aula.jpg', contentType: 'image/jpeg' ,
+        });
     expect(ajeno.status).toBe(403);
 
     const subida = await http
       .post(`/api/espacios/${espacioId}/fotos`)
       .set(auth('responsable'))
       .field('textoAlternativo', 'Vista del aula desde el fondo.')
-      .attach('archivo', imagen, { filename: 'aula.jpg', contentType: 'image/jpeg' });
+      .attach('archivo', imagen, { filename: 'aula.jpg', contentType: 'image/jpeg' ,
+        });
     expect(subida.status).toBe(201);
-    expect(cuerpo(subida)).toMatchObject({ esPortada: true, textoAlternativo: 'Vista del aula desde el fondo.' });
+    expect(cuerpo(subida)).toMatchObject({ esPortada: true, textoAlternativo: 'Vista del aula desde el fondo.' ,
+      });
     const fotoId = cuerpo(subida).id as string;
 
     const tarjeta = await http
@@ -812,7 +969,8 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
 
     const ficha = await http.get(`/api/espacios/E2E-${sufijo.toUpperCase()}`);
     expect(ficha.status).toBe(200);
-    const fotos = cuerpo(ficha).fotos as { urlTarjeta: string; alt: string }[];
+    const fotos = cuerpo(ficha).fotos as { urlTarjeta: string; alt: string ;
+      }[];
     expect(fotos[0]).toMatchObject({
       urlTarjeta: `/api/fotos/${fotoId}/tarjeta`,
       alt: 'Vista del aula desde el fondo.',
@@ -865,7 +1023,8 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
       where: { bloqueoId, estado: { not: 'LIBERADA' } },
     });
     expect(activas).toBe(0);
-    const bloqueo = await prisma.bloqueoCalendario.findUniqueOrThrow({ where: { id: bloqueoId } });
+    const bloqueo = await prisma.bloqueoCalendario.findUniqueOrThrow({ where: { id: bloqueoId } ,
+      });
     expect(bloqueo.anuladoEn).not.toBeNull();
 
     const denuevo = await http.post('/api/bloqueos').set(auth('admin')).send(datos);
@@ -877,13 +1036,40 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
     const enviada = await http.post(`/api/solicitudes/${id}/enviar`).set(auth('solicitante'));
     expect(enviada.status).toBe(200);
 
-    await prisma.solicitud.update({ where: { id }, data: { venceEn: new Date(Date.now() - 60_000) } });
+    await prisma.solicitud.update({ where: { id }, data: { venceEn: new Date(Date.now() - 60_000) } ,
+      });
     const resultado = await app.get(VencimientosService).ejecutar();
     expect(resultado.solicitudes).toBeGreaterThanOrEqual(1);
 
-    const solicitud = await prisma.solicitud.findUniqueOrThrow({ where: { id } });
+    const solicitud = await prisma.solicitud.findUniqueOrThrow({ where: { id } ,
+      });
     expect(solicitud.estado).toBe('VENCIDA');
-    const franja = await prisma.franjaOcupada.findFirstOrThrow({ where: { reservaItem: { solicitudId: id } } });
+    const franja = await prisma.franjaOcupada.findFirstOrThrow({ where: { reservaItem: { solicitudId: id } } ,
+      });
     expect(franja.estado).toBe('LIBERADA');
   });
-});
+it('revoca la responsabilidad derivada inmediatamente al quitar el último espacio asignado', async () => {
+      await prisma.espacio.update({
+        where: { id: espacioId },
+        data: { responsableId: null },
+      });
+expect(
+        (await http.get('/api/elementos').set(auth('responsable'))).status,
+      ).toBe(403);
+      expect(
+        (
+          await http
+            .get('/api/solicitudes')
+            .query({ ambito: 'BANDEJA' })
+            .set(auth('responsable'))
+        ).status,
+      ).toBe(403);
+      const yo = await http.get('/api/auth/yo').set(auth('responsable'));
+      expect(yo.status).toBe(200);
+      expect(cuerpo(yo).roles).not.toContainEqual({
+        rol: 'RESPONSABLE_ESPACIO',
+        dependenciaId: null,
+      });
+    });
+  },
+);

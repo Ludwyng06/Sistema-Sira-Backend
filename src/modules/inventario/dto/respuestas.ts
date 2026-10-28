@@ -8,7 +8,7 @@ export class CodigoNombreDto {
   nombre!: string;
 }
 
-export class FotoDto {
+export class FotoPortadaDto {
   @ApiProperty({ example: 'http://localhost:9000/sira/publico/espacios/b-101-tarjeta.webp' })
   url!: string;
 
@@ -36,6 +36,9 @@ export class AforoDto {
 }
 
 export class TarjetaEspacioDto {
+  @ApiProperty({ format: 'uuid', description: 'Identificador para disponibilidad, tarifas y reservas.' })
+  id!: string;
+
   @ApiProperty({ example: 'B-101' })
   codigo!: string;
 
@@ -57,8 +60,8 @@ export class TarjetaEspacioDto {
   @ApiProperty({ type: CodigoNombreDto })
   sede!: CodigoNombreDto;
 
-  @ApiProperty({ type: FotoDto, nullable: true })
-  portada!: FotoDto | null;
+  @ApiProperty({ type: FotoPortadaDto, nullable: true })
+  portada!: FotoPortadaDto | null;
 
   @ApiProperty({ type: [DotacionDto], description: 'Hasta 4 elementos en servicio.' })
   dotacion!: DotacionDto[];
@@ -125,8 +128,8 @@ export class BloqueResumenDto {
   @ApiProperty({ type: String, nullable: true })
   planoUrl!: string | null;
 
-  @ApiProperty({ type: FotoDto, nullable: true })
-  foto!: FotoDto | null;
+  @ApiProperty({ type: FotoPortadaDto, nullable: true })
+  foto!: FotoPortadaDto | null;
 
   @ApiProperty({ example: 5 })
   totalEspacios!: number;

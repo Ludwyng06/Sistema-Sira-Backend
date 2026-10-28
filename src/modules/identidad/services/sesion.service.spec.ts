@@ -42,9 +42,11 @@ function crearEntorno() {
   const prisma = {
     sesionRefresh: tablaSesion,
     usuario: tablaUsuario,
-    $transaction: vi.fn(async (fn: (cliente: typeof tx) => Promise<unknown>) => fn(tx)),
+    $transaction: vi.fn(async (fn: (cliente: typeof tx) => Promise<unknown>) => fn(tx),
+    ),
   };
-  const jwt = new JwtService({ secret: 'secreto-de-prueba', signOptions: { expiresIn: '15m' } });
+  const jwt = new JwtService({ secret: 'secreto-de-prueba', signOptions: { expiresIn: '15m' } ,
+  });
   const config = { getOrThrow: vi.fn(() => 7) };
   const servicio = new SesionService(
     prisma as unknown as PrismaService,
@@ -83,13 +85,36 @@ describe('SesionService', () => {
   });
 
   describe('iniciar', () => {
+    it('deriva la responsabilidad de Espacio sin necesitar una fila en UsuarioRol', async () => {
+      entorno.tablaUsuario.findUnique.mockResolvedValue(
+        usuarioBase({
+          roles: [{ rol: 'SOLICITANTE', dependenciaId: null }],
+          espaciosResponsable: [{ id: 'espacio-1' }],
+        }),
+      );
+      const emitida = await entorno.servicio.iniciar(USUARIO_ID, CONTEXTO);
+      expect(entorno.jwt.decode<CargaJwt>(emitida.accessToken).roles).toEqual([
+        'SOLICITANTE',
+        'RESPONSABLE_ESPACIO',
+      ]);
+      expect(emitida.usuario.roles).toContainEqual({
+        rol: 'RESPONSABLE_ESPACIO',
+        dependenciaId: null,
+      });
+      expect((await entorno.servicio.datosUsuario(USUARIO_ID)).roles).toEqual(
+        emitida.usuario.roles,
+      );
+    });
+
     it('emite un JWT con exactamente la carga esperada, sin dependencias repetidas', async () => {
       const emitida = await entorno.servicio.iniciar(USUARIO_ID, CONTEXTO);
-      const carga = entorno.jwt.decode<CargaJwt & { exp: number; iat: number }>(emitida.accessToken);
+      const carga = entorno.jwt.decode<CargaJwt & { exp: number; iat: number }>(emitida.accessToken,
+      );
 
       const { exp, iat, ...resto } = carga;
       expect(Object.keys(resto).sort()).toEqual(
-        ['correo', 'dependencias', 'institucional', 'roles', 'sub', 'verificado'].sort(),
+        ['correo', 'dependencias', 'institucional', 'roles', 'sub', 'verificado',
+        ].sort(),
       );
       expect(resto).toEqual({
         sub: USUARIO_ID,
@@ -105,7 +130,8 @@ describe('SesionService', () => {
 
     it('incluye la dependencia del jefe aunque no tenga fila de rol', async () => {
       entorno.tablaUsuario.findUnique.mockResolvedValue(
-        usuarioBase({ roles: [{ rol: 'SOLICITANTE', dependenciaId: null }], dependenciasJefe: [{ id: DEP_B }] }),
+        usuarioBase({ roles: [{ rol: 'SOLICITANTE', dependenciaId: null }], dependenciasJefe: [{ id: DEP_B }] ,
+        }),
       );
       const emitida = await entorno.servicio.iniciar(USUARIO_ID, CONTEXTO);
       const carga = entorno.jwt.decode<CargaJwt>(emitida.accessToken);
@@ -117,18 +143,24 @@ describe('SesionService', () => {
       const emitida = await entorno.servicio.iniciar(USUARIO_ID, CONTEXTO);
 
       expect(emitida.refreshToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
-      const { data } = entorno.tablaSesion.create.mock.calls[0]![0] as { data: Record<string, unknown> };
-      expect(data.hashToken).toBe(createHash('sha256').update(emitida.refreshToken).digest('hex'));
+      const { data } = entorno.tablaSesion.create.mock.calls[0]![0] as { data: Record<string, unknown> ;
+      };
+      expect(data.hashToken).toBe(createHash('sha256').update(emitida.refreshToken).digest('hex'),
+      );
       expect(data.hashToken).not.toBe(emitida.refreshToken);
       expect(data.familia).toMatch(/^[0-9a-f-]{36}$/);
-      expect(data).toMatchObject({ usuarioId: USUARIO_ID, ip: '10.0.0.1', userAgent: 'vitest' });
-      expect(emitida.refreshExpiraEn.getTime()).toBeGreaterThanOrEqual(antes + 7 * 86_400_000);
+      expect(data).toMatchObject({ usuarioId: USUARIO_ID, ip: '10.0.0.1', userAgent: 'vitest' ,
+      });
+      expect(emitida.refreshExpiraEn.getTime()).toBeGreaterThanOrEqual(antes + 7 * 86_400_000,
+      );
       expect(data.expiraEn).toEqual(emitida.refreshExpiraEn);
     });
 
     it('rechaza a un usuario inactivo', async () => {
-      entorno.tablaUsuario.findUnique.mockResolvedValue(usuarioBase({ activo: false }));
-      const error = await capturar(entorno.servicio.iniciar(USUARIO_ID, CONTEXTO));
+      entorno.tablaUsuario.findUnique.mockResolvedValue(usuarioBase({ activo: false }),
+      );
+      const error = await capturar(entorno.servicio.iniciar(USUARIO_ID, CONTEXTO),
+      );
       expect(error.codigo).toBe('SESION_INVALIDA');
     });
   });
@@ -141,22 +173,27 @@ describe('SesionService', () => {
       expect(entorno.prisma.$transaction).toHaveBeenCalledOnce();
       expect(entorno.tablaSesion.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { hashToken: createHash('sha256').update('token-viejo').digest('hex') },
+          where: { hashToken: createHash('sha256').update('token-viejo').digest('hex') ,
+          },
         }),
       );
       expect(entorno.tablaSesion.updateMany).toHaveBeenCalledWith({
         where: { id: 'sesion-1', revocadoEn: null },
         data: { revocadoEn: expect.any(Date) },
       });
-      const { data } = entorno.tablaSesion.create.mock.calls[0]![0] as { data: Record<string, unknown> };
+      const { data } = entorno.tablaSesion.create.mock.calls[0]![0] as { data: Record<string, unknown> ;
+      };
       expect(data.familia).toBe(FAMILIA);
-      expect(data.hashToken).toBe(createHash('sha256').update(emitida.refreshToken).digest('hex'));
+      expect(data.hashToken).toBe(createHash('sha256').update(emitida.refreshToken).digest('hex'),
+      );
     });
 
     it('un token revocado hace tiempo es reuso: revoca toda la familia y da SESION_REVOCADA', async () => {
       const hace = new Date(Date.now() - GRACIA_REFRESCO_MS - 1_000);
-      entorno.tablaSesion.findUnique.mockResolvedValue(sesionGuardada({ revocadoEn: hace }));
-      const error = await capturar(entorno.servicio.rotar('token-viejo', CONTEXTO));
+      entorno.tablaSesion.findUnique.mockResolvedValue(sesionGuardada({ revocadoEn: hace }),
+      );
+      const error = await capturar(entorno.servicio.rotar('token-viejo', CONTEXTO),
+      );
 
       expect(error.codigo).toBe('SESION_REVOCADA');
       expect(error.status).toBe(401);
@@ -169,8 +206,10 @@ describe('SesionService', () => {
 
     it('un token rotado hace segundos (otra pestaña) da REFRESCO_CONCURRENTE sin revocar la familia', async () => {
       const hace = new Date(Date.now() - 2_000);
-      entorno.tablaSesion.findUnique.mockResolvedValue(sesionGuardada({ revocadoEn: hace }));
-      const error = await capturar(entorno.servicio.rotar('token-viejo', CONTEXTO));
+      entorno.tablaSesion.findUnique.mockResolvedValue(sesionGuardada({ revocadoEn: hace }),
+      );
+      const error = await capturar(entorno.servicio.rotar('token-viejo', CONTEXTO),
+      );
 
       expect(error.codigo).toBe('REFRESCO_CONCURRENTE');
       expect(error.status).toBe(401);
@@ -213,7 +252,8 @@ describe('SesionService', () => {
     it('revoca solo la sesión del token', async () => {
       await entorno.servicio.cerrar('abc');
       expect(entorno.tablaSesion.updateMany).toHaveBeenCalledWith({
-        where: { hashToken: createHash('sha256').update('abc').digest('hex'), revocadoEn: null },
+        where: { hashToken: createHash('sha256').update('abc').digest('hex'), revocadoEn: null ,
+        },
         data: { revocadoEn: expect.any(Date) },
       });
     });
@@ -230,7 +270,8 @@ describe('SesionService', () => {
 
     it('usa el cliente de la transacción si se le pasa', async () => {
       const updateMany = vi.fn().mockResolvedValue({ count: 3 });
-      await entorno.servicio.revocarTodas(USUARIO_ID, { sesionRefresh: { updateMany } } as never);
+      await entorno.servicio.revocarTodas(USUARIO_ID, { sesionRefresh: { updateMany } ,
+      } as never);
       expect(updateMany).toHaveBeenCalledOnce();
       expect(entorno.tablaSesion.updateMany).not.toHaveBeenCalled();
     });
@@ -270,7 +311,8 @@ describe('SesionService', () => {
         telefono: '+573001234567',
         dependenciaId: DEP_A,
       });
-      expect(datos).toMatchObject({ id: USUARIO_ID, correoVerificado: true, esInstitucional: true });
+      expect(datos).toMatchObject({ id: USUARIO_ID, correoVerificado: true, esInstitucional: true ,
+      });
     });
 
     it('perfil es null sin solicitante', async () => {
@@ -278,14 +320,14 @@ describe('SesionService', () => {
       expect(datos.perfil).toBeNull();
     });
 
-    it.each([['no existe', null], ['está inactivo', usuarioBase({ activo: false })]])(
+    it.each([['no existe', null], ['está inactivo', usuarioBase({ activo: false })],
+    ])(
       'SESION_INVALIDA si el usuario %s',
       async (_caso, usuario) => {
         entorno.tablaUsuario.findUnique.mockResolvedValue(usuario);
         const error = await capturar(entorno.servicio.datosUsuario(USUARIO_ID));
         expect(error.codigo).toBe('SESION_INVALIDA');
         expect(error.status).toBe(401);
-      },
-    );
+      });
   });
 });

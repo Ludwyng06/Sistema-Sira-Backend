@@ -10,7 +10,7 @@ import type {
   BloqueResumenDto,
   ConteoPorTipoDto,
   FichaEspacioDto,
-  FotoDto,
+  FotoPortadaDto,
   PaginaEspaciosDto,
   PisoDto,
   SedeResumenDto,
@@ -57,7 +57,8 @@ function incluirTarjeta(hoy: Date) {
   } satisfies Prisma.EspacioInclude;
 }
 
-type EspacioConTarjeta = Prisma.EspacioGetPayload<{ include: ReturnType<typeof incluirTarjeta> }>;
+type EspacioConTarjeta = Prisma.EspacioGetPayload<{ include: ReturnType<typeof incluirTarjeta> ;
+}>;
 
 @Injectable()
 export class InventarioPublicoService {
@@ -70,7 +71,8 @@ export class InventarioPublicoService {
       include: {
         bloques: {
           where: { activo: true },
-          include: { espacios: { where: ESPACIO_VISIBLE, select: { id: true } } },
+          include: { espacios: { where: ESPACIO_VISIBLE, select: { id: true } } ,
+          },
         },
       },
     });
@@ -80,7 +82,8 @@ export class InventarioPublicoService {
       municipio: sede.municipio,
       direccion: sede.direccion,
       totalBloques: sede.bloques.length,
-      totalEspacios: sede.bloques.reduce((suma, bloque) => suma + bloque.espacios.length, 0),
+      totalEspacios: sede.bloques.reduce((suma, bloque) => suma + bloque.espacios.length, 0,
+      ),
     }));
   }
 
@@ -100,7 +103,8 @@ export class InventarioPublicoService {
           orderBy: { codigo: 'asc' },
           include: {
             tipo: true,
-            fotografias: { orderBy: [{ esPortada: 'desc' }, { orden: 'asc' }], take: 1 },
+            fotografias: { orderBy: [{ esPortada: 'desc' }, { orden: 'asc' }], take: 1 ,
+            },
           },
         },
       },
@@ -112,13 +116,15 @@ export class InventarioPublicoService {
       descripcion: bloque.descripcion,
       numeroPisos: bloque.numeroPisos,
       planoUrl: bloque.planoUrl,
-      foto: this.portada(bloque.espacios.flatMap((espacio) => espacio.fotografias)),
+      foto: this.portada(bloque.espacios.flatMap((espacio) => espacio.fotografias),
+      ),
       totalEspacios: bloque.espacios.length,
       capacidadMaxima: bloque.espacios.reduce(
         (maxima, espacio) => Math.max(maxima, espacio.capacidadPersonas),
         0,
       ),
-      conteoPorTipo: this.contarPorTipo(bloque.espacios.map((espacio) => espacio.tipo)),
+      conteoPorTipo: this.contarPorTipo(bloque.espacios.map((espacio) => espacio.tipo),
+      ),
     }));
   }
 
@@ -175,7 +181,8 @@ export class InventarioPublicoService {
     };
   }
 
-  async buscarEspacios(filtros: FiltrosEspaciosDto): Promise<PaginaEspaciosDto> {
+  async buscarEspacios(filtros: FiltrosEspaciosDto,
+  ): Promise<PaginaEspaciosDto> {
     const hoy = this.hoy();
     const { asistentes, pagina, porPagina } = filtros;
 
@@ -199,7 +206,8 @@ export class InventarioPublicoService {
         this.prisma.espacio.count({ where }),
         this.prisma.espacio.findMany({
           where,
-          orderBy: [{ bloque: { codigo: 'asc' } }, { piso: 'asc' }, { codigo: 'asc' }],
+          orderBy: [{ bloque: { codigo: 'asc' } }, { piso: 'asc' }, { codigo: 'asc' },
+          ],
           skip: (pagina - 1) * porPagina,
           take: porPagina,
           include: incluirTarjeta(hoy),
@@ -214,9 +222,11 @@ export class InventarioPublicoService {
     }
 
     // El orden por ajuste es una regla de dominio, no de SQL: se aplica en memoria.
-    const todos = await this.prisma.espacio.findMany({ where, include: incluirTarjeta(hoy) });
+    const todos = await this.prisma.espacio.findMany({ where, include: incluirTarjeta(hoy) ,
+    });
     const ordenados = ordenarPorAjuste(todos, asistentes);
-    const pagina_ = ordenados.slice((pagina - 1) * porPagina, pagina * porPagina);
+    const pagina_ = ordenados.slice((pagina - 1) * porPagina, pagina * porPagina,
+    );
     return {
       datos: pagina_.map((espacio) => this.tarjeta(espacio, asistentes)),
       total: ordenados.length,
@@ -225,7 +235,9 @@ export class InventarioPublicoService {
     };
   }
 
-  async obtenerEspacio(codigo: string): Promise<FichaEspacioDto> {
+  async obtenerEspacio(codigo: string,
+    asistentes?: number,
+  ): Promise<FichaEspacioDto> {
     const hoy = this.hoy();
     const espacio = await this.prisma.espacio.findFirst({
       where: { ...ESPACIO_VISIBLE, codigo: codigo.toUpperCase() },
@@ -246,7 +258,9 @@ export class InventarioPublicoService {
       ...this.tarjeta({
         ...espacio,
         elementos: espacio.elementos.slice(0, MAXIMO_DOTACION_EN_TARJETA),
-      }),
+      },
+        asistentes,
+      ),
       descripcion: espacio.descripcion,
       condicionesUso: espacio.condicionesUso,
       areaM2: espacio.areaM2 === null ? null : Number(espacio.areaM2),
@@ -315,35 +329,43 @@ export class InventarioPublicoService {
   }
 
   private portada(
-    fotografias: { urlTarjeta: string; textoAlternativo: string; esPortada?: boolean }[],
-  ): FotoDto | null {
+    fotografias: { urlTarjeta: string; textoAlternativo: string; esPortada?: boolean ;
+    }[],
+  ): FotoPortadaDto | null {
     const foto = fotografias.find((f) => f.esPortada) ?? fotografias[0];
     return foto ? { url: foto.urlTarjeta, alt: foto.textoAlternativo } : null;
   }
 
-  private contarPorTipo(tipos: { codigo: string; nombre: string }[]): ConteoPorTipoDto[] {
+  private contarPorTipo(tipos: { codigo: string; nombre: string }[],
+  ): ConteoPorTipoDto[] {
     const conteo = new Map<string, ConteoPorTipoDto>();
     for (const tipo of tipos) {
       const actual = conteo.get(tipo.codigo);
       if (actual) actual.total += 1;
-      else conteo.set(tipo.codigo, { tipo: tipo.codigo, nombre: tipo.nombre, total: 1 });
+      else conteo.set(tipo.codigo, { tipo: tipo.codigo, nombre: tipo.nombre, total: 1 ,
+        });
     }
-    return [...conteo.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+    return [...conteo.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'),
+    );
   }
 
-  private tarjeta(espacio: EspacioConTarjeta, asistentes?: number): TarjetaEspacioDto {
+  private tarjeta(espacio: EspacioConTarjeta, asistentes?: number,
+  ): TarjetaEspacioDto {
     const tarjeta: TarjetaEspacioDto = {
+      id: espacio.id,
       codigo: espacio.codigo,
       nombre: espacio.nombre,
       piso: espacio.piso,
       capacidadPersonas: espacio.capacidadPersonas,
       tipo: { codigo: espacio.tipo.codigo, nombre: espacio.tipo.nombre },
       bloque: { codigo: espacio.bloque.codigo, nombre: espacio.bloque.nombre },
-      sede: { codigo: espacio.bloque.sede.codigo, nombre: espacio.bloque.sede.nombre },
+      sede: { codigo: espacio.bloque.sede.codigo, nombre: espacio.bloque.sede.nombre ,
+      },
       portada: this.portada(espacio.fotografias),
       dotacion: espacio.elementos
         .slice(0, MAXIMO_DOTACION_EN_TARJETA)
-        .map((elemento) => ({ nombre: elemento.nombre, cantidad: elemento.cantidad })),
+        .map((elemento) => ({ nombre: elemento.nombre, cantidad: elemento.cantidad ,
+        })),
       tarifaDesde: espacio.tarifas.length > 0 ? espacio.tarifas[0].valor : null,
     };
     if (asistentes !== undefined) {

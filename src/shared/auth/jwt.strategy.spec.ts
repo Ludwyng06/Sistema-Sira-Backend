@@ -27,6 +27,32 @@ function estrategia(usuario: unknown) {
 }
 
 describe('JwtStrategy.validate', () => {
+  it('conserva el rol derivado solo mientras el usuario tenga espacios a cargo', async () => {
+    const token = { ...carga, roles: ['RESPONSABLE_ESPACIO' as const] };
+    const conEspacio = estrategia({
+      activo: true,
+      roles: [],
+      espaciosResponsable: [{ id: 'espacio-1' }],
+    });
+    expect((await conEspacio.estrategia.validate(token)).roles).toEqual([
+      'RESPONSABLE_ESPACIO',
+    ]);
+    const sinEspacio = estrategia({
+      activo: true,
+      roles: [],
+      espaciosResponsable: [],
+    });
+    expect((await sinEspacio.estrategia.validate(token)).roles).toEqual([]);
+    const asignado = estrategia({
+      activo: true,
+      roles: [{ rol: 'RESPONSABLE_ESPACIO' }],
+      espaciosResponsable: [],
+    });
+    expect((await asignado.estrategia.validate(token)).roles).toEqual([
+      'RESPONSABLE_ESPACIO',
+    ]);
+  });
+
   it('rechaza un token de una cuenta desactivada o inexistente', async () => {
     for (const usuario of [
       null,

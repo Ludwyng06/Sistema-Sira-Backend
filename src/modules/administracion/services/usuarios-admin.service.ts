@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import type { Prisma } from '../../../generated/prisma/client.js';
 import { Rol } from '../../../generated/prisma/enums.js';
 import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
-import { ErrorDominio, noEncontrado } from '../../../shared/errores/error-dominio.js';
+import { ErrorDominio, noEncontrado ,
+} from '../../../shared/errores/error-dominio.js';
 import { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import { SesionService } from '../../identidad/services/sesion.service.js';
 import type {
@@ -21,17 +22,35 @@ export interface ContextoAdmin {
 /** Clave del candado consultivo de PostgreSQL para los cambios de administradores. */
 const CANDADO_ADMINISTRADORES = 731_001;
 
-const ROLES_SIN_DEPENDENCIA: Rol[] = [Rol.SOLICITANTE, Rol.ADMINISTRADOR, Rol.TESORERIA, Rol.AUDITOR];
+const ROLES_SIN_DEPENDENCIA: Rol[] = [Rol.SOLICITANTE, Rol.ADMINISTRADOR, Rol.TESORERIA, Rol.AUDITOR,
+];
 
 const incluirUsuario = {
-  roles: { select: { rol: true, dependenciaId: true }, orderBy: { creadoEn: 'asc' } },
-  solicitante: { select: { nombres: true, apellidos: true, razonSocial: true } },
+  roles: { select: { rol: true, dependenciaId: true }, orderBy: { creadoEn: 'asc' } ,
+  },
+  solicitante: { select: { nombres: true, apellidos: true, razonSocial: true } ,
+  },
+  espaciosResponsable: {
+    where: { archivadoEn: null },
+    select: { id: true },
+    take: 1,
+  },
 } satisfies Prisma.UsuarioInclude;
 
 type FilaUsuario = Prisma.UsuarioGetPayload<{ include: typeof incluirUsuario }>;
 
 function aDto(fila: FilaUsuario): UsuarioAdminDto {
   const perfil = fila.solicitante;
+  const roles: UsuarioAdminDto['roles'] = fila.roles.map((r) => ({
+    rol: r.rol,
+    dependenciaId: r.dependenciaId,
+  }));
+  if (
+    fila.espaciosResponsable?.length &&
+    !roles.some((r) => r.rol === Rol.RESPONSABLE_ESPACIO)
+  ) {
+    roles.push({ rol: Rol.RESPONSABLE_ESPACIO, dependenciaId: null });
+  }
   const nombre = perfil
     ? [perfil.nombres, perfil.apellidos].filter((parte): parte is string => !!parte).join(' ') ||
       perfil.razonSocial
@@ -43,7 +62,7 @@ function aDto(fila: FilaUsuario): UsuarioAdminDto {
     activo: fila.activo,
     correoVerificado: fila.correoVerificado,
     esInstitucional: fila.esInstitucional,
-    roles: fila.roles.map((r) => ({ rol: r.rol, dependenciaId: r.dependenciaId })),
+    roles,
     ultimoIngresoEn: fila.ultimoIngresoEn?.toISOString() ?? null,
     creadoEn: fila.creadoEn.toISOString(),
   };
@@ -60,7 +79,14 @@ export class UsuariosAdminService {
     const busqueda = filtros.busqueda?.trim();
     const where: Prisma.UsuarioWhereInput = {
       ...(filtros.activo !== undefined ? { activo: filtros.activo } : {}),
-      ...(filtros.rol ? { roles: { some: { rol: filtros.rol } } } : {}),
+      ...(filtros.rol === Rol.RESPONSABLE_ESPACIO
+        ? {
+            OR: [
+              { roles: { some: { rol: filtros.rol } } },
+              { espaciosResponsable: { some: { archivadoEn: null } } },
+            ],
+          }
+        : filtros.rol ? { roles: { some: { rol: filtros.rol } } } : {}),
       ...(busqueda ? { correo: { contains: busqueda, mode: 'insensitive' } } : {}),
     };
     const [total, filas] = await Promise.all([
@@ -73,11 +99,13 @@ export class UsuariosAdminService {
         take: filtros.porPagina,
       }),
     ]);
-    return { datos: filas.map(aDto), total, pagina: filtros.pagina, porPagina: filtros.porPagina };
+    return { datos: filas.map(aDto), total, pagina: filtros.pagina, porPagina: filtros.porPagina ,
+    };
   }
 
   async obtener(id: string): Promise<UsuarioAdminDto> {
-    const fila = await this.prisma.usuario.findUnique({ where: { id }, include: incluirUsuario });
+    const fila = await this.prisma.usuario.findUnique({ where: { id }, include: incluirUsuario ,
+    });
     if (!fila) throw noEncontrado('El usuario');
     return aDto(fila);
   }
@@ -97,7 +125,8 @@ export class UsuariosAdminService {
 
     if (!activo) {
       if (usuario.id === actor.id) {
-        throw new ErrorDominio('AUTODESACTIVACION', 'No puedes desactivar tu propia cuenta.', 409);
+        throw new ErrorDominio('AUTODESACTIVACION', 'No puedes desactivar tu propia cuenta.', 409,
+        );
       }
     }
     const quitaAdministrador =
@@ -147,11 +176,13 @@ export class UsuariosAdminService {
     for (const asignacion of datos.roles) {
       const clave = `${asignacion.rol}:${asignacion.dependenciaId ?? ''}`;
       if (claves.has(clave)) {
-        throw new ErrorDominio('ROL_DUPLICADO', 'La lista repite un rol con la misma dependencia.', 422);
+        throw new ErrorDominio('ROL_DUPLICADO', 'La lista repite un rol con la misma dependencia.', 422,
+        );
       }
       claves.add(clave);
       if (asignacion.rol === Rol.APROBADOR && !asignacion.dependenciaId) {
-        throw new ErrorDominio('DEPENDENCIA_REQUERIDA', 'El rol APROBADOR exige una dependencia.', 422);
+        throw new ErrorDominio('DEPENDENCIA_REQUERIDA', 'El rol APROBADOR exige una dependencia.', 422,
+        );
       }
       if (ROLES_SIN_DEPENDENCIA.includes(asignacion.rol) && asignacion.dependenciaId) {
         throw new ErrorDominio(
@@ -177,8 +208,10 @@ export class UsuariosAdminService {
       }
     }
 
-    const eraAdministrador = usuario.roles.some((r) => r.rol === Rol.ADMINISTRADOR);
-    const seraAdministrador = datos.roles.some((r) => r.rol === Rol.ADMINISTRADOR);
+    const eraAdministrador = usuario.roles.some((r) => r.rol === Rol.ADMINISTRADOR,
+    );
+    const seraAdministrador = datos.roles.some((r) => r.rol === Rol.ADMINISTRADOR,
+    );
     const quitaAdministrador = eraAdministrador && !seraAdministrador && usuario.activo;
 
     await this.prisma.$transaction(async (tx) => {
@@ -202,7 +235,8 @@ export class UsuariosAdminService {
           entidadId: id,
           datosAntes: { roles: usuario.roles },
           datosDespues: {
-            roles: datos.roles.map((r) => ({ rol: r.rol, dependenciaId: r.dependenciaId ?? null })),
+            roles: datos.roles.map((r) => ({ rol: r.rol, dependenciaId: r.dependenciaId ?? null ,
+            })),
           },
           ip: contexto.ip,
           userAgent: contexto.userAgent,
@@ -217,10 +251,12 @@ export class UsuariosAdminService {
    * Debe llamarse dentro de la transacción. El candado consultivo serializa los cambios que quitan un
    * administrador: sin él, dos administradores que se desactivan entre sí a la vez dejan el sistema sin ninguno.
    */
-  private async exigirOtroAdministrador(tx: Prisma.TransactionClient, excluirId: string): Promise<void> {
+  private async exigirOtroAdministrador(tx: Prisma.TransactionClient, excluirId: string,
+  ): Promise<void> {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(${CANDADO_ADMINISTRADORES})`;
     const otros = await tx.usuario.count({
-      where: { id: { not: excluirId }, activo: true, roles: { some: { rol: Rol.ADMINISTRADOR } } },
+      where: { id: { not: excluirId }, activo: true, roles: { some: { rol: Rol.ADMINISTRADOR } } ,
+      },
     });
     if (otros === 0) {
       throw new ErrorDominio(
