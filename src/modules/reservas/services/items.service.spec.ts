@@ -41,7 +41,8 @@ function crearEntorno() {
     reservaItem: {
       findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn((args: { data: Record<string, unknown> }) =>
-        Promise.resolve({ id: 'r-1', ...args.data, cantidad: { toString: () => String(args.data.cantidad) } }),
+        Promise.resolve({ id: 'r-1', ...args.data, espacio: { codigo: 'B-101', nombre: 'Auditorio Mayor' },
+          cantidad: { toString: () => String(args.data.cantidad) } }),
       ),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
@@ -88,6 +89,7 @@ describe('ItemsService reservas', () => {
   it('agrega la reserva con el valor estimado por el tarifario', async () => {
     const e = crearEntorno();
     const item = await e.servicio.agregarReserva(SOLICITUD_ID, reserva(), usuario);
+    expect(item).toMatchObject({ espacioCodigo: 'B-101', espacioNombre: 'Auditorio Mayor' });
 
     expect(e.solicitudes.borradorPropio).toHaveBeenCalledWith(SOLICITUD_ID, usuario);
     expect(e.tarifario.calcular).toHaveBeenCalledWith(

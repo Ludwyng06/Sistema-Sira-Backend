@@ -1,11 +1,13 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   Param,
   Patch,
   Post,
   Put,
+  Query,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -18,9 +20,11 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Roles } from '../../../shared/auth/decoradores.js';
+import { ApiErrores } from '../../../shared/errores/api-errores.js';
 import { Auditar } from '../../auditoria/auditar.decorador.js';
 import { ActualizarEspacioDto } from '../dto/actualizar-espacio.dto.js';
 import { CrearEspacioDto } from '../dto/crear-espacio.dto.js';
+import { EspacioAdminDto, FiltrosEspaciosAdminDto, PaginaEspaciosAdminDto } from '../dto/espacio-admin.dto.js';
 import { ReemplazarHorariosDto } from '../dto/horarios-espacio.dto.js';
 import { EspacioCreadoDto, HorarioDto } from '../dto/respuestas.js';
 import { EspaciosAdminService } from '../services/espacios-admin.service.js';
@@ -32,8 +36,31 @@ import { EspaciosAdminService } from '../services/espacios-admin.service.js';
 export class EspaciosAdminController {
   constructor(private readonly servicio: EspaciosAdminService) {}
 
+  @Get('gestion')
+  @ApiOperation({
+    summary: 'Lista los espacios para administración, incluidos los ocultos del catálogo público.',
+    description: 'Filtra por sede, bloque, estado y archivo; no excluye espacios por visibilidad pública.',
+  })
+  @ApiOkResponse({ type: PaginaEspaciosAdminDto })
+  @ApiErrores(400, 401, 403)
+  listar(@Query() filtros: FiltrosEspaciosAdminDto): Promise<PaginaEspaciosAdminDto> {
+    return this.servicio.listar(filtros);
+  }
+
+  @Get('gestion/:codigo')
+  @ApiOperation({
+    summary: 'Detalle administrativo de un espacio, aunque esté archivado o fuera de servicio.',
+    description: 'El código se normaliza a mayúsculas. Errores: 404 NO_ENCONTRADO.',
+  })
+  @ApiOkResponse({ type: EspacioAdminDto })
+  @ApiErrores(401, 403, 404)
+  obtener(@Param('codigo') codigo: string): Promise<EspacioAdminDto> {
+    return this.servicio.obtener(codigo);
+  }
+
   @Post()
-  @ApiOperation({ summary: 'Crea un espacio.' })
+  @ApiOperation({ summary: 'Crea un espacio.', description: 'Permite asignar un responsable activo. Errores: 422 RESPONSABLE_NO_VALIDO.' })
+  @ApiErrores(400, 401, 403, 422)
   @ApiCreatedResponse({ type: EspacioCreadoDto })
   @ApiConflictResponse({ description: 'Ya existe un espacio con ese código.' })
   crear(@Body() datos: CrearEspacioDto): Promise<EspacioCreadoDto> {

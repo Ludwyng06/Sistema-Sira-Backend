@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '../../../generated/prisma/client.js';
 import {
   ErrorDominio,
   noEncontrado,
@@ -7,8 +8,48 @@ import { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import { NotificacionesService } from '../../notificaciones/services/notificaciones.service.js';
 import type { ActualizarEspacioDto } from '../dto/actualizar-espacio.dto.js';
 import type { CrearEspacioDto } from '../dto/crear-espacio.dto.js';
+import type { EspacioAdminDto, FiltrosEspaciosAdminDto, PaginaEspaciosAdminDto } from '../dto/espacio-admin.dto.js';
 import type { ReemplazarHorariosDto } from '../dto/horarios-espacio.dto.js';
 import type { EspacioCreadoDto, HorarioDto } from '../dto/respuestas.js';
+
+const incluirAdministracion = {
+  tipo: true,
+  bloque: { include: { sede: true } },
+  dependencia: { select: { codigo: true } },
+  horarios: { orderBy: { diaSemana: 'asc' } },
+} satisfies Prisma.EspacioInclude;
+
+type FilaAdministracion = Prisma.EspacioGetPayload<{ include: typeof incluirAdministracion }>;
+
+function aAdministracion(espacio: FilaAdministracion): EspacioAdminDto {
+  return {
+    id: espacio.id,
+    codigo: espacio.codigo,
+    nombre: espacio.nombre,
+    piso: espacio.piso,
+    capacidadPersonas: espacio.capacidadPersonas,
+    areaM2: espacio.areaM2 === null ? null : Number(espacio.areaM2),
+    descripcion: espacio.descripcion,
+    condicionesUso: espacio.condicionesUso,
+    estado: espacio.estado,
+    requiereAval: espacio.requiereAval,
+    esReservable: espacio.esReservable,
+    minutosMontaje: espacio.minutosMontaje,
+    minutosDesmontaje: espacio.minutosDesmontaje,
+    depositoValorFijo: espacio.depositoValorFijo,
+    depositoPorcentaje: espacio.depositoPorcentaje === null ? null : Number(espacio.depositoPorcentaje),
+    responsableId: espacio.responsableId,
+    dependenciaId: espacio.dependenciaId,
+    dependenciaCodigo: espacio.dependencia?.codigo ?? null,
+    activo: espacio.archivadoEn === null,
+    tipo: { codigo: espacio.tipo.codigo, nombre: espacio.tipo.nombre },
+    bloque: { codigo: espacio.bloque.codigo, nombre: espacio.bloque.nombre },
+    sede: { codigo: espacio.bloque.sede.codigo, nombre: espacio.bloque.sede.nombre },
+    horarios: espacio.horarios.map((horario) => ({
+      diaSemana: horario.diaSemana, abre: horario.abre, cierra: horario.cierra,
+    })),
+  };
+}
 
 @Injectable()
 export class EspaciosAdminService {
@@ -16,6 +57,47 @@ export class EspaciosAdminService {
     private readonly prisma: PrismaService,
     private readonly notificaciones: NotificacionesService,
   ) {}
+
+  async listar(filtros: FiltrosEspaciosAdminDto): Promise<PaginaEspaciosAdminDto> {
+    const where: Prisma.EspacioWhereInput = {
+      ...(filtros.activo === undefined ? {} : {
+        archivadoEn: filtros.activo ? null : { not: null },
+      }),
+      ...(filtros.estado ? { estado: filtros.estado } : {}),
+      ...(filtros.bloqueId ? { bloqueId: filtros.bloqueId } : {}),
+      bloque: {
+        ...(filtros.bloque ? { codigo: filtros.bloque.toUpperCase() } : {}),
+        ...(filtros.sedeId ? { sedeId: filtros.sedeId } : {}),
+        ...(filtros.sede ? { sede: { codigo: filtros.sede.toUpperCase() } } : {}),
+      },
+    };
+    const [total, espacios] = await Promise.all([
+      this.prisma.espacio.count({ where }),
+      this.prisma.espacio.findMany({
+        where, include: incluirAdministracion, orderBy: { codigo: 'asc' },
+        skip: (filtros.pagina - 1) * filtros.porPagina, take: filtros.porPagina,
+      }),
+    ]);
+    return { datos: espacios.map(aAdministracion), total, pagina: filtros.pagina, porPagina: filtros.porPagina };
+  }
+
+  async obtener(codigo: string): Promise<EspacioAdminDto> {
+    const espacio = await this.prisma.espacio.findUnique({
+      where: { codigo: codigo.toUpperCase() }, include: incluirAdministracion,
+    });
+    if (!espacio) throw noEncontrado('El espacio');
+    return aAdministracion(espacio);
+  }
+
+  private async validarResponsable(responsableId: string | null | undefined): Promise<void> {
+    if (!responsableId) return;
+    const responsable = await this.prisma.usuario.findFirst({
+      where: { id: responsableId, activo: true }, select: { id: true },
+    });
+    if (!responsable) {
+      throw new ErrorDominio('RESPONSABLE_NO_VALIDO', 'El responsable indicado no existe o está inactivo.', 422);
+    }
+  }
 
   async crear(datos: CrearEspacioDto): Promise<EspacioCreadoDto> {
     const bloque = await this.prisma.bloque.findFirst({
@@ -79,11 +161,13 @@ export class EspaciosAdminService {
       );
     }
 
+    await this.validarResponsable(datos.responsableId);
     const espacio = await this.prisma.espacio.create({
       data: {
         bloqueId: bloque.id,
         tipoEspacioId: tipo.id,
         dependenciaId,
+        responsableId: datos.responsableId,
         codigo: datos.codigo,
         nombre: datos.nombre,
         piso: datos.piso,
@@ -165,19 +249,7 @@ export class EspaciosAdminService {
       }
     }
 
-    if (datos.responsableId) {
-      const responsable = await this.prisma.usuario.findFirst({
-        where: { id: datos.responsableId, activo: true },
-        select: { id: true },
-      });
-      if (!responsable) {
-        throw new ErrorDominio(
-          'RESPONSABLE_NO_VALIDO',
-          'El responsable indicado no existe o está inactivo.',
-          422,
-        );
-      }
-    }
+    await this.validarResponsable(datos.responsableId);
 
     const espacio = await this.prisma.espacio.update({
       where: { id: actual.id },

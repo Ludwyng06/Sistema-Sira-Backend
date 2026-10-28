@@ -16,8 +16,8 @@ import { TiposEspacioAdminService } from './services/tipos-espacio-admin.service
 @Module({
   imports: [NotificacionesModule],
   controllers: [
-    InventarioPublicoController,
     EspaciosAdminController,
+    InventarioPublicoController,
     SedesAdminController,
     BloquesAdminController,
     TiposEspacioAdminController,

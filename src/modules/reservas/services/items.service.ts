@@ -86,6 +86,7 @@ export class ItemsService {
         );
       }
       return tx.reservaItem.create({
+        include: { espacio: { select: { codigo: true, nombre: true } } },
         data: {
           solicitudId,
           espacioId: espacio.id,
@@ -102,6 +103,8 @@ export class ItemsService {
     return {
       id: fila.id,
       espacioId: fila.espacioId,
+      espacioCodigo: fila.espacio.codigo,
+      espacioNombre: fila.espacio.nombre,
       inicio: fila.inicio.toISOString(),
       fin: fila.fin.toISOString(),
       unidad: fila.unidad,

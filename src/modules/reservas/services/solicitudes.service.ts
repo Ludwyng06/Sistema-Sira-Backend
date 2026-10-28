@@ -41,10 +41,11 @@ export function aDto(fila: FilaSolicitud): SolicitudDto {
 
 type FilaDetalle = Prisma.SolicitudGetPayload<{
   include: {
-    reservas: true;
+    reservas: { include: { espacio: { select: { codigo: true; nombre: true } } } };
     servicios: { include: { servicio: { select: { nombre: true } } } };
     decisiones: true;
     cotizaciones: true;
+    actas: true;
   };
 }>;
 
@@ -55,6 +56,8 @@ function aDetalle(fila: FilaDetalle): SolicitudDetalleDto {
     reservas: fila.reservas.map((r) => ({
       id: r.id,
       espacioId: r.espacioId,
+      espacioCodigo: r.espacio.codigo,
+      espacioNombre: r.espacio.nombre,
       inicio: r.inicio.toISOString(),
       fin: r.fin.toISOString(),
       unidad: r.unidad,
@@ -62,6 +65,13 @@ function aDetalle(fila: FilaDetalle): SolicitudDetalleDto {
       valorUnitario: r.valorUnitario,
       recargos: r.recargos,
       subtotal: r.subtotal,
+    })),
+    actas: fila.actas.map((acta) => ({
+      id: acta.id,
+      consecutivo: acta.consecutivo,
+      tipo: acta.tipo,
+      observaciones: acta.observaciones,
+      registradaEn: acta.generadaEn.toISOString(),
     })),
     servicios: fila.servicios.map((s) => ({
       id: s.id,
@@ -154,10 +164,14 @@ export class SolicitudesService {
     const fila = await this.prisma.solicitud.findFirst({
       where: { id, OR: alternativas },
       include: {
-        reservas: { orderBy: { inicio: 'asc' } },
+        reservas: {
+          orderBy: { inicio: 'asc' },
+          include: { espacio: { select: { codigo: true, nombre: true } } },
+        },
         servicios: { include: { servicio: { select: { nombre: true } } } },
         decisiones: { orderBy: { decididaEn: 'asc' } },
         cotizaciones: { orderBy: { creadaEn: 'desc' }, take: 1 },
+        actas: { orderBy: { generadaEn: 'asc' } },
       },
     });
     if (!fila) throw noEncontrado('La solicitud');

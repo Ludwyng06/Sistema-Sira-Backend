@@ -111,6 +111,7 @@ describe('SolicitudesService.obtener', () => {
         {
           id: 'r-1',
           espacioId: 'esp-1',
+          espacio: { codigo: 'B-101', nombre: 'Auditorio Mayor' },
           inicio: new Date('2026-11-03T13:00:00.000Z'),
           fin: new Date('2026-11-03T17:00:00.000Z'),
           unidad: 'HORA',
@@ -120,6 +121,8 @@ describe('SolicitudesService.obtener', () => {
           subtotal: 80_000,
         },
       ],
+      actas: [{ id: 'acta-1', consecutivo: 'ACT-2026-0001', tipo: 'ENTREGA',
+        observaciones: null, generadaEn: new Date('2026-11-03T13:00:00.000Z') }],
       servicios: [
         {
           id: 's-1',
@@ -162,19 +165,26 @@ describe('SolicitudesService.obtener', () => {
     const { where } = e.prisma.solicitud.findFirst.mock.calls[0]![0] as { where: Record<string, unknown> };
     expect(where).toEqual({ id: SOLICITUD_ID, OR: [{ solicitanteId: 'sol-1' }] });
     expect(r.reservas).toEqual([
-      expect.objectContaining({ id: 'r-1', cantidad: 4, subtotal: 80_000, inicio: '2026-11-03T13:00:00.000Z' }),
+      expect.objectContaining({ id: 'r-1', cantidad: 4, subtotal: 80_000, inicio: '2026-11-03T13:00:00.000Z',
+        espacioCodigo: 'B-101', espacioNombre: 'Auditorio Mayor' }),
     ]);
     expect(r.servicios).toEqual([expect.objectContaining({ nombre: 'Sonido', subtotal: 50_000 })]);
     expect(r.decisiones).toEqual([
       { tipo: 'AVAL', resultado: 'APROBADA', motivo: null, decididaEn: '2026-10-22T10:00:00.000Z' },
     ]);
     expect(r.cotizacion).toMatchObject({ consecutivo: 'COT-2026-0001', total: 130_000 });
+    expect(r.actas).toEqual([{ id: 'acta-1', consecutivo: 'ACT-2026-0001', tipo: 'ENTREGA',
+      observaciones: null, registradaEn: '2026-11-03T13:00:00.000Z' }]);
+    expect(e.prisma.solicitud.findFirst).toHaveBeenCalledWith(expect.objectContaining({ include: expect.objectContaining({
+      actas: { orderBy: { generadaEn: 'asc' } },
+      reservas: { orderBy: { inicio: 'asc' }, include: { espacio: { select: { codigo: true, nombre: true } } } },
+    }) }));
   });
 
   it('sin cotización devuelve null', async () => {
     const e = crearEntorno();
-    e.prisma.solicitud.findFirst.mockResolvedValue(detalle({ cotizaciones: [] }));
-    await expect(e.servicio.obtener(SOLICITUD_ID, usuario())).resolves.toMatchObject({ cotizacion: null });
+    e.prisma.solicitud.findFirst.mockResolvedValue(detalle({ cotizaciones: [], actas: [] }));
+    await expect(e.servicio.obtener(SOLICITUD_ID, usuario())).resolves.toMatchObject({ cotizacion: null, actas: [] });
   });
 
   it('una solicitud fuera de alcance responde 404', async () => {

@@ -13,7 +13,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import { EstadoSolicitud, TipoSolicitante } from '../../../generated/prisma/enums.js';
+import { EstadoSolicitud, TipoActa, TipoSolicitante } from '../../../generated/prisma/enums.js';
 
 export class CrearSolicitudDto {
   @ApiProperty({ example: 'Congreso de Ingeniería de Sistemas', maxLength: 200 })
@@ -277,7 +277,27 @@ export class CotizacionResumenDto {
   validaHasta!: string;
 }
 
+export class ActaResumenSolicitudDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ example: 'ACT-2026-0001' })
+  consecutivo!: string;
+
+  @ApiProperty({ enum: TipoActa })
+  tipo!: TipoActa;
+
+  @ApiProperty({ type: String, nullable: true })
+  observaciones!: string | null;
+
+  @ApiProperty({ format: 'date-time', description: 'Fecha de generación del acta, en ISO 8601 UTC.' })
+  registradaEn!: string;
+}
+
 export class SolicitudDetalleDto extends SolicitudDto {
+  @ApiProperty({ type: [ActaResumenSolicitudDto] })
+  actas!: ActaResumenSolicitudDto[];
+
   @ApiProperty({ type: [ReservaItemDto], description: 'Espacios y horarios solicitados.' })
   reservas!: ReservaItemDto[];
 

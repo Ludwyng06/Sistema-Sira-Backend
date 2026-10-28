@@ -37,6 +37,12 @@ export class AgregarServicioDto {
 }
 
 export class ReservaItemDto {
+  @ApiPropertyOptional({ example: 'B-101' })
+  espacioCodigo?: string;
+
+  @ApiPropertyOptional({ example: 'Auditorio Mayor' })
+  espacioNombre?: string;
+
   @ApiProperty({ format: 'uuid' })
   id!: string;
 

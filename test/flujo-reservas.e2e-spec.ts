@@ -100,6 +100,7 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
       .send({ espacioId, inicio: hora(fecha, desde), fin: hora(fecha, hasta) ,
         });
     expect(item.status).toBe(201);
+    expect(cuerpo(item)).toMatchObject({ espacioCodigo: `E2E-${sufijo.toUpperCase()}`, espacioNombre: `Aula E2E ${sufijo}` });
     return id;
   }
 
@@ -550,6 +551,21 @@ describe.sequential('UC-01 a UC-05 de punta a punta contra la base real', () => 
       });
     expect(devolucion.status).toBe(201);
     expect(cuerpo(devolucion).estadoSolicitud).toBe('FINALIZADA');
+
+    const solicitudConActas = await http.get(`/api/solicitudes/${solicitudId}`).set(auth('solicitante'));
+    expect(solicitudConActas.status).toBe(200);
+    expect(cuerpo(solicitudConActas).reservas).toEqual(expect.arrayContaining([
+      expect.objectContaining({ espacioId, espacioCodigo: `E2E-${sufijo.toUpperCase()}`, espacioNombre: `Aula E2E ${sufijo}` }),
+    ]));
+    expect(cuerpo(solicitudConActas).actas).toEqual([
+      { id: actaEntregaId, consecutivo: cuerpo(entrega).consecutivo, tipo: 'ENTREGA',
+        observaciones: null, registradaEn: cuerpo(entrega).generadaEn },
+      { id: cuerpo(devolucion).id, consecutivo: cuerpo(devolucion).consecutivo, tipo: 'DEVOLUCION',
+        observaciones: null, registradaEn: cuerpo(devolucion).generadaEn },
+    ]);
+    const pdfDelSolicitante = await http.get(`/api/actas/${actaEntregaId}.pdf`).set(auth('solicitante'));
+    expect(pdfDelSolicitante.status).toBe(200);
+    expect(pdfDelSolicitante.headers['content-type']).toContain('application/pdf');
 
     const lectura = await http.get(`/api/actas/${actaEntregaId}`).set(auth('solicitante'));
     expect(lectura.status).toBe(200);

@@ -76,6 +76,8 @@ describe.sequential('Administración del inventario contra la base real', () => 
       '/api/elementos',
       '/api/sedes/gestion',
       '/api/tipos-espacio/gestion',
+      '/api/espacios/gestion',
+      '/api/espacios/gestion/A-101',
     ]) {
       expect((await http.get(ruta).set(auth(solicitante))).status).toBe(403);
     }
@@ -136,6 +138,7 @@ describe.sequential('Administración del inventario contra la base real', () => 
   });
 
   it('crea el espacio, lo modifica y valida pisos', async () => {
+    const responsable = await prisma.usuario.findUniqueOrThrow({ where: { correo: `e2e-inv-admin-${sufijo}@itp.edu.co` } });
     const creado = await http
       .post('/api/espacios')
       .set(auth(admin))
@@ -147,6 +150,7 @@ describe.sequential('Administración del inventario contra la base real', () => 
         nombre: 'Aula E2E',
         piso: 1,
         capacidadPersonas: 30,
+        responsableId: responsable.id,
       });
     expect(creado.status).toBe(201);
     espacioId = (
@@ -154,6 +158,7 @@ describe.sequential('Administración del inventario contra la base real', () => 
         where: { codigo: codigoEspacio },
       })
     ).id;
+    expect((await prisma.espacio.findUniqueOrThrow({ where: { id: espacioId } })).responsableId).toBe(responsable.id);
 
     const editado = await http
       .patch(`/api/espacios/${codigoEspacio}`)
@@ -311,6 +316,56 @@ describe.sequential('Administración del inventario contra la base real', () => 
     );
   });
 
+  it('la gestión conserva espacios ocultos y valida filtros, paginación y responsables', async () => {
+    const detalle = `/api/espacios/gestion/${codigoEspacio.toLowerCase()}`;
+    const filtros = { sedeId, bloqueId, sede: `s${sufijo.toLowerCase()}`, bloque: 'a', porPagina: 1 };
+    const anterior = await http.get(detalle).set(auth(admin));
+    expect(anterior.status).toBe(200);
+    expect(cuerpo(anterior)).toMatchObject({ id: espacioId, activo: true, estado: 'EN_MANTENIMIENTO',
+      esReservable: true, dependenciaId: null, dependenciaCodigo: null, areaM2: null,
+      horarios: [] });
+    expect((await http.get('/api/espacios/gestion/NO-EXISTE').set(auth(admin))).status).toBe(404);
+    expect((await http.get('/api/espacios/gestion').query({ sedeId: 'invalido' }).set(auth(admin))).status).toBe(400);
+    expect((await http.get('/api/espacios/gestion').query({ estado: 'INVALIDO' }).set(auth(admin))).status).toBe(400);
+    expect((await http.get('/api/espacios/gestion').query({ activo: 'incorrecto' }).set(auth(admin))).status).toBe(400);
+    const actualizado = await http.patch(`/api/espacios/${codigoEspacio}`).set(auth(admin))
+      .send({ estado: 'FUERA_DE_SERVICIO', esReservable: false, areaM2: 48.5, depositoPorcentaje: 5.25 });
+    expect(actualizado.status).toBe(200);
+    expect((await http.get(`/api/espacios/${codigoEspacio}`)).status).toBe(404);
+    await prisma.bloque.update({ where: { id: bloqueId }, data: { activo: false } });
+    await prisma.sede.update({ where: { id: sedeId }, data: { activa: false } });
+    try {
+      const listado = await http.get('/api/espacios/gestion').query({ ...filtros, estado: 'FUERA_DE_SERVICIO', activo: true }).set(auth(admin));
+      expect(listado.status).toBe(200);
+      expect(cuerpo(listado)).toMatchObject({ total: 1, pagina: 1, porPagina: 1, datos: [{
+        codigo: codigoEspacio, estado: 'FUERA_DE_SERVICIO', esReservable: false, areaM2: 48.5, depositoPorcentaje: 5.25,
+      }] });
+      const ficha = await http.get(detalle).set(auth(admin));
+      expect(ficha.status).toBe(200);
+      expect(cuerpo(ficha)).toMatchObject({ estado: 'FUERA_DE_SERVICIO', esReservable: false });
+      const segunda = await http.get('/api/espacios/gestion').query({ ...filtros, pagina: 2 }).set(auth(admin));
+      expect(cuerpo(segunda)).toMatchObject({ datos: [], total: 1, pagina: 2 });
+    } finally {
+      await prisma.bloque.update({ where: { id: bloqueId }, data: { activo: true } });
+      await prisma.sede.update({ where: { id: sedeId }, data: { activa: true } });
+      await prisma.espacio.update({ where: { id: espacioId }, data: { estado: 'EN_MANTENIMIENTO', esReservable: true } });
+    }
+    const datos = { sede: `S${sufijo}`, bloque: 'A', tipo: `T${sufijo}`, codigo: `Z-${sufijo}`,
+      nombre: 'No debe crearse', piso: 1, capacidadPersonas: 20, responsableId: randomUUID() };
+    const inexistente = await http.post('/api/espacios').set(auth(admin)).send(datos);
+    expect(inexistente.status).toBe(422);
+    expect(cuerpo(inexistente).codigo).toBe('RESPONSABLE_NO_VALIDO');
+    const inactivo = await prisma.usuario.findUniqueOrThrow({ where: { correo: `e2e-inv-sol-${sufijo}@example.com` } });
+    await prisma.usuario.update({ where: { id: inactivo.id }, data: { activo: false } });
+    try {
+      const rechazado = await http.post('/api/espacios').set(auth(admin)).send({ ...datos, responsableId: inactivo.id });
+      expect(rechazado.status).toBe(422);
+      expect(cuerpo(rechazado).codigo).toBe('RESPONSABLE_NO_VALIDO');
+    } finally {
+      await prisma.usuario.update({ where: { id: inactivo.id }, data: { activo: true } });
+    }
+  });
+
   it('registra, traslada y da de baja elementos con placa única', async () => {
     const elemento = await http
       .post('/api/elementos')
@@ -394,6 +449,13 @@ describe.sequential('Administración del inventario contra la base real', () => 
           .set(auth(admin))
       ).status,
     ).toBe(204);
+    const archivado = await http.get(`/api/espacios/gestion/${codigoEspacio}`).set(auth(admin));
+    expect(archivado.status).toBe(200);
+    expect(cuerpo(archivado).activo).toBe(false);
+    const inactivos = await http.get('/api/espacios/gestion').query({ sedeId, activo: false }).set(auth(admin));
+    expect(cuerpo(inactivos).datos).toEqual([expect.objectContaining({ id: espacioId, activo: false })]);
+    const activos = await http.get('/api/espacios/gestion').query({ sedeId, activo: true }).set(auth(admin));
+    expect(cuerpo(activos).total).toBe(0);
     expect(
       (
         await http
