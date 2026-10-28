@@ -35,6 +35,16 @@ async function parametros() {
       'Porcentaje reembolsable según los días de antelación (RN-14).',
     ],
     ['version_politica_datos', '2026-10', 'Versión vigente de la política de datos personales.'],
+    ['minutos_vigencia_codigo', 15, 'Minutos de validez del código de verificación de correo.'],
+    ['max_intentos_codigo', 5, 'Intentos permitidos por código de verificación.'],
+    [
+      'segundos_espera_reenvio_codigo',
+      60,
+      'Tiempo mínimo entre dos envíos del código (máximo 1 por minuto).',
+    ],
+    ['minutos_vigencia_enlace_recuperacion', 30, 'Minutos de validez del enlace para restablecer la contraseña.'],
+    ['max_intentos_ingreso', 5, 'Intentos fallidos de ingreso antes de bloquear la cuenta (RF-AUT-10).'],
+    ['minutos_bloqueo_ingreso', 15, 'Minutos que dura el bloqueo por intentos fallidos.'],
     [
       'cuenta_recaudo',
       {
@@ -432,6 +442,31 @@ const ID_BLOQUEO_CLASE = '00000000-0000-4000-8000-000000000001';
 const ID_BLOQUEO_MANTENIMIENTO = '00000000-0000-4000-8000-000000000002';
 const idFranja = (n: number) => `00000000-0000-4000-8000-0000000001${String(n).padStart(2, '0')}`;
 
+// -----------------------------------------------------------------------------
+// Horario de operación (RN-19). Lunes a viernes 06:00-22:00, sábado 06:00-18:00; domingo cerrado.
+// 0 = domingo ... 6 = sábado. Valores de prueba hasta que Vicerrectoría confirme los reales.
+// -----------------------------------------------------------------------------
+const HORARIO_OPERACION: [number, string, string][] = [
+  [1, '06:00', '22:00'],
+  [2, '06:00', '22:00'],
+  [3, '06:00', '22:00'],
+  [4, '06:00', '22:00'],
+  [5, '06:00', '22:00'],
+  [6, '06:00', '18:00'],
+];
+
+async function horarios(espacios: Map<string, string>) {
+  for (const espacioId of espacios.values()) {
+    for (const [diaSemana, abre, cierra] of HORARIO_OPERACION) {
+      await prisma.horarioOperacion.upsert({
+        where: { espacioId_diaSemana: { espacioId, diaSemana } },
+        update: { abre, cierra },
+        create: { espacioId, diaSemana, abre, cierra },
+      });
+    }
+  }
+}
+
 async function bloqueos(ids: Map<string, string>, espacios: Map<string, string>) {
   const creadoPorId = ids.get('admin@itp.edu.co')!;
   const aulaA101 = espacios.get('A-101')!;
@@ -575,9 +610,10 @@ async function main() {
   await perfilesSolicitante(ids, deps);
   const espacios = await inventario(ids, deps);
   await tarifario();
+  await horarios(espacios);
   await bloqueos(ids, espacios);
   await servicios();
-  console.log('Siembra completada: sede MOC, bloques A/B/C, 12 espacios y usuarios de prueba.');
+  console.log('Siembra completada: sede MOC, bloques A/B/C, 12 espacios con horario y usuarios de prueba.');
 }
 
 main()

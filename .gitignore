@@ -11,3 +11,5 @@ src/generated/
 .vscode/*
 !.vscode/extensions.json
 *.tsbuildinfo
+almacenamiento/
+.env.prod

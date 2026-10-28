@@ -20,19 +20,16 @@ export interface Configuracion {
   SMTP_USUARIO: string;
   SMTP_CONTRASENA: string;
   CORREO_REMITENTE: string;
+  ALMACENAMIENTO_DIR: string;
 }
 
+// Las variables S3 son opcionales: hoy los archivos van al disco (ALMACENAMIENTO_DIR) y S3 queda para la etapa 2.
 const OBLIGATORIAS = [
   'FRONTEND_URL',
   'DATABASE_URL',
   'JWT_ACCESS_SECRETO',
   'JWT_REFRESH_SECRETO',
   'REDIS_URL',
-  'S3_ENDPOINT',
-  'S3_BUCKET',
-  'S3_ACCESS_KEY',
-  'S3_SECRET_KEY',
-  'S3_URL_PUBLICA',
   'SMTP_HOST',
   'CORREO_REMITENTE',
 ] as const;
@@ -84,6 +81,7 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
     SMTP_USUARIO: texto('SMTP_USUARIO'),
     SMTP_CONTRASENA: texto('SMTP_CONTRASENA'),
     CORREO_REMITENTE: texto('CORREO_REMITENTE'),
+    ALMACENAMIENTO_DIR: texto('ALMACENAMIENTO_DIR', './almacenamiento'),
   };
 
   if (configuracion.NODE_ENV === 'production') {
