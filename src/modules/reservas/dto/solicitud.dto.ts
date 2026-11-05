@@ -294,6 +294,29 @@ export class ActaResumenSolicitudDto {
   registradaEn!: string;
 }
 
+export class EstimadoSolicitudDto {
+  @ApiProperty({
+    example: 80000,
+    description: 'Horas × tarifa de las franjas + cantidad × tarifa de los servicios, sin recargos.',
+  })
+  base!: number;
+
+  @ApiProperty({ example: 36000, description: 'Suma de recargos (nocturno, dominical, festivo).' })
+  recargos!: number;
+
+  @ApiProperty({ example: 116000, description: 'base + recargos.' })
+  subtotal!: number;
+
+  @ApiProperty({ example: 0, description: 'IVA según la tarifa aplicada a cada concepto.' })
+  iva!: number;
+
+  @ApiProperty({ example: 0, description: 'Depósito de garantía de los espacios que lo exigen. Va aparte del total.' })
+  deposito!: number;
+
+  @ApiProperty({ example: 116000, description: 'subtotal + iva (sin el depósito).' })
+  total!: number;
+}
+
 export class SolicitudDetalleDto extends SolicitudDto {
   @ApiProperty({ type: [ActaResumenSolicitudDto] })
   actas!: ActaResumenSolicitudDto[];
@@ -309,6 +332,15 @@ export class SolicitudDetalleDto extends SolicitudDto {
 
   @ApiProperty({ type: CotizacionResumenDto, nullable: true, description: 'Última cotización emitida, si hay.' })
   cotizacion!: CotizacionResumenDto | null;
+
+  @ApiProperty({
+    type: EstimadoSolicitudDto,
+    description:
+      'Estimado en pesos enteros con la tarifa vigente del tipo de tarifa de la solicitud, calculado con la ' +
+      'misma lógica de la cotización. No es la cotización: puede cambiar hasta que se emita. En solicitudes ' +
+      'institucionales exentas es solo un valor de referencia. Sigue presente cuando ya existe la cotización.',
+  })
+  estimado!: EstimadoSolicitudDto;
 }
 
 export class PaginaSolicitudesDto {

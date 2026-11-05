@@ -34,6 +34,26 @@ function rangoInvalido(): ErrorDominio {
 export class TarifarioService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Tarifa vigente de un servicio para el tipo de solicitante, en pesos enteros (0 si no hay). */
+  async valorServicio(
+    servicioId: string,
+    tipoSolicitante: TipoSolicitante,
+    fecha: Date = new Date(),
+  ): Promise<number> {
+    const dia = new Date(`${fechaLocal(fecha)}T00:00:00.000Z`);
+    const tarifa = await this.prisma.tarifa.findFirst({
+      where: {
+        servicioId,
+        tipoSolicitante,
+        vigenciaDesde: { lte: dia },
+        OR: [{ vigenciaHasta: null }, { vigenciaHasta: { gte: dia } }],
+      },
+      orderBy: { vigenciaDesde: 'desc' },
+      select: { valor: true },
+    });
+    return tarifa?.valor ?? 0;
+  }
+
   /**
    * RN-05: usa la tarifa vigente en `fechaEmision`. RN-06: resuelve las tarifas
    * en SMMLV con el valor del año de esa fecha.

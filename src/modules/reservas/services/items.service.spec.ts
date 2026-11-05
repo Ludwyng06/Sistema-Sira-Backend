@@ -68,13 +68,15 @@ function crearEntorno() {
       ),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
-    tarifa: { findFirst: vi.fn().mockResolvedValue({ valor: 150_000 }) },
   };
   prisma.$transaction.mockImplementation((fn: (cliente: typeof prisma) => unknown) => fn(prisma));
   const solicitudes = {
     borradorPropio: vi.fn().mockResolvedValue({ id: SOLICITUD_ID, tipoTarifa: 'INTERNO' }),
   };
-  const tarifario = { calcular: vi.fn().mockResolvedValue(estimado) };
+  const tarifario = {
+    calcular: vi.fn().mockResolvedValue(estimado),
+    valorServicio: vi.fn().mockResolvedValue(150_000),
+  };
   const servicio = new ItemsService(
     prisma as unknown as PrismaService,
     solicitudes as unknown as SolicitudesService,
@@ -306,7 +308,7 @@ describe('ItemsService concurrencia con el envío', () => {
   it('un servicio cuyo valor por cantidad desborda un entero de PostgreSQL da 422 VALOR_EXCEDIDO', async () => {
     const e = crearEntorno();
     conReserva(e);
-    e.prisma.tarifa.findFirst.mockResolvedValue({ valor: 2_000_000_000 });
+    e.tarifario.valorServicio.mockResolvedValue(2_000_000_000);
     const error = await rechazo(
       e.servicio.agregarServicio(SOLICITUD_ID, { servicioId: SERVICIO_ID, cantidad: 2 }, usuario),
     );
@@ -380,14 +382,13 @@ describe('ItemsService servicios', () => {
       subtotal: 300_000,
       estadoConfirmacion: 'PENDIENTE',
     });
-    const { where } = e.prisma.tarifa.findFirst.mock.calls[0]![0] as { where: Record<string, unknown> };
-    expect(where).toMatchObject({ servicioId: SERVICIO_ID, tipoSolicitante: 'INTERNO' });
+    expect(e.tarifario.valorServicio).toHaveBeenCalledWith(SERVICIO_ID, 'INTERNO');
   });
 
   it('sin tarifa definida el valor estimado es 0', async () => {
     const e = crearEntorno();
     conReserva(e);
-    e.prisma.tarifa.findFirst.mockResolvedValue(null);
+    e.tarifario.valorServicio.mockResolvedValue(0);
     const item = await e.servicio.agregarServicio(SOLICITUD_ID, { servicioId: SERVICIO_ID, cantidad: 1 }, usuario);
     expect(item).toMatchObject({ valorUnitario: 0, subtotal: 0 });
   });

@@ -1,3 +1,4 @@
+import { type FranjaCalculada, resumirItemReserva, totalizarSolicitud } from '../dominio/totales.js';
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '../../../generated/prisma/client.js';
 import {
@@ -34,6 +35,7 @@ interface Cotizado {
   total: number;
   valorReferencia: number;
   deposito: number;
+  recalculosServicio: { id: string; valorUnitario: number; subtotal: number }[];
   recalculosReserva: {
     id: string;
     unidad: UnidadCobroTarifa | null;
@@ -42,10 +44,6 @@ interface Cotizado {
     recargos: number;
     subtotal: number;
   }[];
-}
-
-function dosDecimales(valor: number): number {
-  return Math.round(valor * 100) / 100;
 }
 
 @Injectable()
@@ -248,6 +246,12 @@ export class DecisionesService {
             },
           });
         }
+        for (const recalculo of cotizado.recalculosServicio) {
+          await tx.servicioItem.update({
+            where: { id: recalculo.id },
+            data: { valorUnitario: recalculo.valorUnitario, subtotal: recalculo.subtotal },
+          });
+        }
         if (esExentaFinal) {
           avanzar('APROBAR_EXENTA');
           await tx.franjaOcupada.updateMany({
@@ -410,11 +414,8 @@ export class DecisionesService {
   ): Promise<Cotizado> {
     const recalculosReserva: Cotizado['recalculosReserva'] = [];
     const reservasDesglose: Record<string, unknown>[] = [];
-    let subtotalEspacios = 0;
-    let iva = 0;
+    const franjas: FranjaCalculada[] = [];
     let referencia = 0;
-    let depositoFijo = 0;
-    let depositoPorcentaje = 0;
 
     for (const r of solicitud.reservas) {
       const calculo: TarifaCalculada = await this.tarifario.calcular({
@@ -423,19 +424,13 @@ export class DecisionesService {
         inicio: r.inicio,
         fin: r.fin,
       });
-      const cantidad = calculo.lineas.reduce((suma, l) => suma + l.cantidad, 0);
-      const unidades = new Set(calculo.lineas.map((l) => l.unidad));
-      const unica = unidades.size === 1 ? [...unidades][0]! : null;
-      recalculosReserva.push({
-        id: r.id,
-        unidad: unica && unica !== 'JORNADAS' ? unica : null,
-        cantidad: dosDecimales(cantidad),
-        valorUnitario: cantidad > 0 ? Math.round(calculo.base / cantidad) : 0,
-        recargos: calculo.recargos,
-        subtotal: calculo.subtotal,
+      recalculosReserva.push({ id: r.id, ...resumirItemReserva(calculo) });
+      franjas.push({
+        ...calculo,
+        espacioId: r.espacioId,
+        depositoValorFijo: r.espacio.depositoValorFijo,
+        depositoPorcentaje: Number(r.espacio.depositoPorcentaje?.toString() ?? 0),
       });
-      subtotalEspacios += calculo.subtotal;
-      iva += calculo.iva;
       reservasDesglose.push({
         reservaId: r.id,
         espacioId: r.espacioId,
@@ -447,8 +442,6 @@ export class DecisionesService {
         subtotal: calculo.subtotal,
         iva: calculo.iva,
       });
-      depositoFijo += r.espacio.depositoValorFijo ?? 0;
-      depositoPorcentaje += Number(r.espacio.depositoPorcentaje?.toString() ?? 0);
 
       if (esExenta) {
         try {
@@ -465,27 +458,37 @@ export class DecisionesService {
       }
     }
 
-    const subtotalServicios = solicitud.servicios.reduce((suma, s) => suma + s.subtotal, 0);
-    const subtotal = subtotalEspacios + subtotalServicios;
-    const deposito = depositoFijo + Math.round((subtotal * depositoPorcentaje) / 100);
+    // RN-05: los servicios también se cotizan con la tarifa vigente a la emisión y desde aquí quedan congelados.
+    const recalculosServicio: Cotizado['recalculosServicio'] = [];
+    for (const item of solicitud.servicios) {
+      const valorUnitario = await this.tarifario.valorServicio(item.servicioId, tipoTarifa);
+      recalculosServicio.push({ id: item.id, valorUnitario, subtotal: valorUnitario * item.cantidad });
+      if (esExenta) {
+        const comparable = await this.tarifario.valorServicio(item.servicioId, TipoSolicitante.PERSONA_NATURAL);
+        referencia += comparable * item.cantidad;
+      }
+    }
+    const subtotalServicios = recalculosServicio.reduce((suma, s) => suma + s.subtotal, 0);
+    const { subtotal, iva, total, deposito } = totalizarSolicitud(franjas, subtotalServicios);
     return {
       desglose: {
         tipoTarifa,
         reservas: reservasDesglose,
-        servicios: solicitud.servicios.map((s) => ({
+        servicios: solicitud.servicios.map((s, i) => ({
           servicioItemId: s.id,
           servicioId: s.servicioId,
           cantidad: s.cantidad,
-          valorUnitario: s.valorUnitario,
-          subtotal: s.subtotal,
+          valorUnitario: recalculosServicio[i]!.valorUnitario,
+          subtotal: recalculosServicio[i]!.subtotal,
         })),
       } as Prisma.InputJsonValue,
       subtotal,
       iva,
-      total: subtotal + iva,
-      valorReferencia: referencia + subtotalServicios,
+      total,
+      valorReferencia: referencia,
       deposito,
       recalculosReserva,
+      recalculosServicio,
     };
   }
 }

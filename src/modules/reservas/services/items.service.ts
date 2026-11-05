@@ -202,18 +202,7 @@ export class ItemsService {
       );
     }
 
-    const hoy = new Date(`${fechaLocal(new Date())}T00:00:00.000Z`);
-    const tarifa = await this.prisma.tarifa.findFirst({
-      where: {
-        servicioId: servicio.id,
-        tipoSolicitante: solicitud.tipoTarifa,
-        vigenciaDesde: { lte: hoy },
-        OR: [{ vigenciaHasta: null }, { vigenciaHasta: { gte: hoy } }],
-      },
-      orderBy: { vigenciaDesde: 'desc' },
-      select: { valor: true },
-    });
-    const valorUnitario = tarifa?.valor ?? 0;
+    const valorUnitario = await this.tarifario.valorServicio(servicio.id, solicitud.tipoTarifa);
 
     const subtotal = valorUnitario * datos.cantidad;
     if (subtotal > VALOR_MAXIMO_PESOS) {

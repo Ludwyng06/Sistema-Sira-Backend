@@ -49,7 +49,7 @@ const solicitud = (cambios: Record<string, unknown> = {}) => ({
   tipoTarifa: 'EMPRESA',
   enviadaEn: new Date('2026-10-21T15:00:00.000Z'),
   reservas: [reserva()],
-  servicios: [{ id: 's-1', servicioId: 'srv-1', cantidad: 1, valorUnitario: 50_000, subtotal: 50_000 }],
+  servicios: [{ id: 's-1', servicioId: 'srv-1', cantidad: 1, valorUnitario: 0, subtotal: 0 }],
   decisiones: [] as { tipo: string; resultado: string; decididaEn: Date }[],
   ...cambios,
 });
@@ -76,6 +76,7 @@ function crearEntorno(fila: unknown = solicitud()) {
     franjaOcupada: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     cotizacion: { create: vi.fn().mockResolvedValue({}) },
     reservaItem: { update: vi.fn().mockResolvedValue({}) },
+    servicioItem: { update: vi.fn().mockResolvedValue({}) },
     solicitud: {
       update: vi.fn().mockResolvedValue({}),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -87,7 +88,11 @@ function crearEntorno(fila: unknown = solicitud()) {
     solicitud: { findFirst: vi.fn().mockResolvedValue(fila) },
     $transaction: vi.fn((fn: (cliente: typeof tx) => Promise<unknown>) => fn(tx)),
   };
-  const tarifario = { calcular: vi.fn().mockResolvedValue(calculo(200_000)) };
+  const tarifario = {
+    calcular: vi.fn().mockResolvedValue(calculo(200_000)),
+    // Tarifa vigente del servicio: 50.000 (el ítem quedó guardado en 0 cuando no había tarifa).
+    valorServicio: vi.fn().mockResolvedValue(50_000),
+  };
   const consecutivos = { siguiente: vi.fn().mockResolvedValue('COT-2026-0001') };
   const parametros = { obtenerNumero: vi.fn().mockResolvedValue(48) };
   const notificaciones = {
@@ -207,6 +212,22 @@ describe('DecisionesService.decidir', () => {
     expect(e.tx.franjaOcupada.updateMany).toHaveBeenCalledWith({
       where: { reservaItemId: { in: ['r-1'] }, estado: 'RETENIDA' },
       data: { retenidaHasta: new Date('2026-10-24T15:00:00.000Z') },
+    });
+  });
+
+  it('al cotizar, el servicio se recalcula con la tarifa vigente y queda guardado en el ítem (RN-05)', async () => {
+    const e = crearEntorno(solicitud({ decisiones: avalOtorgado, servicios: [
+      { id: 's-1', servicioId: 'srv-1', cantidad: 2, valorUnitario: 0, subtotal: 0 },
+    ] }));
+    await e.servicio.decidir(SOLICITUD_ID, { tipo: 'APROBACION', resultado: 'APROBADA' }, aprobador, CONTEXTO);
+
+    expect(e.tarifario.valorServicio).toHaveBeenCalledWith('srv-1', 'EMPRESA');
+    expect(e.tx.servicioItem.update).toHaveBeenCalledWith({
+      where: { id: 's-1' },
+      data: { valorUnitario: 50_000, subtotal: 100_000 },
+    });
+    expect(e.tx.cotizacion.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ subtotal: 300_000, total: 300_000 }),
     });
   });
 

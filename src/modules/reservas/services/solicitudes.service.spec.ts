@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ErrorDominio } from '../../../shared/errores/error-dominio.js';
 import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import type { PrismaService } from '../../../shared/prisma/prisma.service.js';
+import type { TarifarioService } from '../../tarifario/services/tarifario.service.js';
 import { SolicitudesService } from './solicitudes.service.js';
 
 const SOLICITANTE = { id: 'sol-1', tipo: 'INTERNO', dependenciaId: 'dep-1' };
@@ -38,6 +40,18 @@ const fila = (cambios: Record<string, unknown> = {}) => ({
   ...cambios,
 });
 
+// Mismo cálculo que usa la prueba de la cotización en decisiones.service.spec.ts.
+const calculo = (total: number) => ({
+  espacioId: 'esp-1',
+  tipoSolicitante: 'INTERNO',
+  lineas: [],
+  base: total,
+  recargos: 0,
+  subtotal: total,
+  iva: 0,
+  total,
+});
+
 function crearEntorno(opciones: { solicitante?: unknown } = {}) {
   const tx = {
     solicitud: { create: vi.fn().mockResolvedValue(fila()) },
@@ -58,7 +72,16 @@ function crearEntorno(opciones: { solicitante?: unknown } = {}) {
     },
     $transaction: vi.fn((fn: (cliente: typeof tx) => Promise<unknown>) => fn(tx)),
   };
-  return { servicio: new SolicitudesService(prisma as unknown as PrismaService), prisma, tx };
+  const tarifario = {
+    calcular: vi.fn().mockResolvedValue(calculo(200_000)),
+    valorServicio: vi.fn().mockResolvedValue(50_000),
+  };
+  return {
+    servicio: new SolicitudesService(prisma as unknown as PrismaService, tarifario as unknown as TarifarioService),
+    prisma,
+    tx,
+    tarifario,
+  };
 }
 
 const rechazo = (promesa: Promise<unknown>): Promise<unknown> => promesa.catch((e: unknown) => e);
@@ -111,7 +134,13 @@ describe('SolicitudesService.obtener', () => {
         {
           id: 'r-1',
           espacioId: 'esp-1',
-          espacio: { codigo: 'B-101', nombre: 'Auditorio Mayor', tipoEspacioId: 'tipo-1' },
+          espacio: {
+            codigo: 'B-101',
+            nombre: 'Auditorio Mayor',
+            tipoEspacioId: 'tipo-1',
+            depositoValorFijo: 100_000,
+            depositoPorcentaje: null,
+          },
           inicio: new Date('2026-11-03T13:00:00.000Z'),
           fin: new Date('2026-11-03T17:00:00.000Z'),
           unidad: 'HORA',
@@ -177,8 +206,66 @@ describe('SolicitudesService.obtener', () => {
       observaciones: null, registradaEn: '2026-11-03T13:00:00.000Z' }]);
     expect(e.prisma.solicitud.findFirst).toHaveBeenCalledWith(expect.objectContaining({ include: expect.objectContaining({
       actas: { orderBy: { generadaEn: 'asc' } },
-      reservas: { orderBy: { inicio: 'asc' }, include: { espacio: { select: { codigo: true, nombre: true, tipoEspacioId: true } } } },
+      reservas: { orderBy: { inicio: 'asc' }, include: { espacio: { select: { codigo: true, nombre: true, tipoEspacioId: true, depositoValorFijo: true, depositoPorcentaje: true } } } },
     }) }));
+  });
+
+  const borrador = (cambios: Record<string, unknown> = {}) =>
+    detalle({ cotizaciones: [], actas: [], estado: 'BORRADOR', ...cambios });
+
+  it('borrador: las líneas y el estimado salen del mismo cálculo con la tarifa vigente', async () => {
+    const e = crearEntorno();
+    // El ítem de servicio quedó guardado en 0 cuando aún no había tarifa; la tarifa vigente es 50.000.
+    const fila = borrador() as unknown as { servicios: Record<string, unknown>[]; reservas: Record<string, unknown>[] };
+    Object.assign(fila.servicios[0]!, { cantidad: 2, valorUnitario: 0, subtotal: 0 });
+    e.prisma.solicitud.findFirst.mockResolvedValue(fila);
+    const r = await e.servicio.obtener(SOLICITUD_ID, usuario());
+
+    expect(e.tarifario.calcular).toHaveBeenCalledWith(
+      expect.objectContaining({ espacioId: 'esp-1', tipoSolicitante: 'INTERNO' }),
+    );
+    expect(e.tarifario.valorServicio).toHaveBeenCalledWith('srv-1', 'INTERNO');
+    expect(r.servicios[0]).toMatchObject({ valorUnitario: 50_000, subtotal: 100_000 });
+    expect(r.reservas[0]).toMatchObject({ subtotal: 200_000 });
+    const lineas = r.reservas.reduce((s, x) => s + x.subtotal, 0) + r.servicios.reduce((s, x) => s + x.subtotal, 0);
+    expect(r.estimado).toEqual({
+      base: 300_000, recargos: 0, subtotal: 300_000, iva: 0, deposito: 100_000, total: 300_000,
+    });
+    expect(lineas).toBe(r.estimado.subtotal);
+  });
+
+  it('el estimado usa el depósito porcentual del espacio sobre sus propias franjas, sin servicios', async () => {
+    const e = crearEntorno();
+    const fila = borrador() as unknown as { reservas: { espacio: Record<string, unknown> }[] };
+    Object.assign(fila.reservas[0]!.espacio, { depositoValorFijo: null, depositoPorcentaje: { toString: () => '20' } });
+    e.prisma.solicitud.findFirst.mockResolvedValue(fila);
+    const r = await e.servicio.obtener(SOLICITUD_ID, usuario());
+    expect(r.estimado).toMatchObject({ subtotal: 250_000, deposito: 40_000 });
+  });
+
+  it('si el espacio no tiene tarifa vigente, usa los valores guardados del ítem', async () => {
+    const e = crearEntorno();
+    e.tarifario.calcular.mockRejectedValue(new ErrorDominio('TARIFA_NO_DEFINIDA', 'x', 422));
+    e.prisma.solicitud.findFirst.mockResolvedValue(borrador());
+    const r = await e.servicio.obtener(SOLICITUD_ID, usuario());
+    expect(r.estimado).toMatchObject({ subtotal: 130_000, base: 130_000 });
+    expect(r.reservas[0]).toMatchObject({ subtotal: 80_000 });
+  });
+
+  it('con cotización emitida nada se recalcula: el estimado y los ítems quedan congelados (RN-05)', async () => {
+    const e = crearEntorno();
+    e.tarifario.calcular.mockResolvedValue(calculo(999_000));
+    e.tarifario.valorServicio.mockResolvedValue(999_000);
+    e.prisma.solicitud.findFirst.mockResolvedValue(detalle({ actas: [] }));
+    const r = await e.servicio.obtener(SOLICITUD_ID, usuario());
+
+    expect(e.tarifario.calcular).not.toHaveBeenCalled();
+    expect(e.tarifario.valorServicio).not.toHaveBeenCalled();
+    expect(r.reservas[0]).toMatchObject({ subtotal: 80_000 });
+    expect(r.servicios[0]).toMatchObject({ valorUnitario: 50_000, subtotal: 50_000 });
+    expect(r.estimado).toEqual({
+      base: 130_000, recargos: 0, subtotal: 130_000, iva: 0, deposito: 0, total: 130_000,
+    });
   });
 
   it('sin cotización devuelve null', async () => {

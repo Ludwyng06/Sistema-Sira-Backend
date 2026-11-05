@@ -709,13 +709,15 @@ async function servicios() {
     nombre: string;
     categoria: 'CULTURAL' | 'TECNICO' | 'ALIMENTACION';
     unidad: 'EVENTO' | 'HORA' | 'PERSONA';
+    /** Tarifa de ejemplo para persona natural; las demás salen de FACTOR. */
+    base: number;
     tipos: string[];
   }[] = [
-    { proveedor: 'Grupo de danzas', nombre: 'Presentación del grupo de danzas', categoria: 'CULTURAL', unidad: 'EVENTO', tipos: ESCENICOS },
-    { proveedor: 'Coro institucional', nombre: 'Presentación del coro', categoria: 'CULTURAL', unidad: 'EVENTO', tipos: ESCENICOS },
-    { proveedor: 'Oficina de Sistemas', nombre: 'Sonido', categoria: 'TECNICO', unidad: 'HORA', tipos: [] },
-    { proveedor: 'Oficina de Sistemas', nombre: 'Videobeam', categoria: 'TECNICO', unidad: 'HORA', tipos: [] },
-    { proveedor: 'Catering', nombre: 'Refrigerio', categoria: 'ALIMENTACION', unidad: 'PERSONA', tipos: SIN_LABORATORIOS },
+    { proveedor: 'Grupo de danzas', nombre: 'Presentación del grupo de danzas', categoria: 'CULTURAL', unidad: 'EVENTO', base: 400_000, tipos: ESCENICOS },
+    { proveedor: 'Coro institucional', nombre: 'Presentación del coro', categoria: 'CULTURAL', unidad: 'EVENTO', base: 350_000, tipos: ESCENICOS },
+    { proveedor: 'Oficina de Sistemas', nombre: 'Sonido', categoria: 'TECNICO', unidad: 'HORA', base: 50_000, tipos: [] },
+    { proveedor: 'Oficina de Sistemas', nombre: 'Videobeam', categoria: 'TECNICO', unidad: 'HORA', base: 30_000, tipos: [] },
+    { proveedor: 'Catering', nombre: 'Refrigerio', categoria: 'ALIMENTACION', unidad: 'PERSONA', base: 8_000, tipos: SIN_LABORATORIOS },
   ];
   for (const s of catalogo) {
     const proveedorId = idDe(s.proveedor);
@@ -725,13 +727,15 @@ async function servicios() {
     const existente = await prisma.servicioComplementario.findFirst({
       where: { proveedorId, nombre: s.nombre },
     });
+    let servicioId: string;
     if (existente) {
+      servicioId = existente.id;
       await prisma.servicioComplementario.update({
         where: { id: existente.id },
         data: { categoria: s.categoria, unidadCobro: s.unidad, tiposPermitidos: { set: tipoIds } },
       });
     } else {
-      await prisma.servicioComplementario.create({
+      servicioId = (await prisma.servicioComplementario.create({
         data: {
           proveedorId,
           nombre: s.nombre,
@@ -740,7 +744,27 @@ async function servicios() {
           descripcion: EJEMPLO,
           tiposPermitidos: { connect: tipoIds },
         },
+      })).id;
+    }
+
+    // Tarifas de ejemplo por tipo de solicitante. En servicios `unidad` va nula: la define el servicio
+    // (`unidadCobro`: EVENTO, HORA o PERSONA), y `agregarServicio` la busca sin filtrar por unidad.
+    for (const tipoSolicitante of ['PERSONA_NATURAL', 'EMPRESA', 'ENTIDAD', 'INTERNO'] as const) {
+      const vigenciaDesde = fecha('2026-01-01');
+      const datosTarifa = {
+        valor: Math.round((s.base * FACTOR[tipoSolicitante]) / 1000) * 1000,
+        ivaAplica: false,
+        porcentajeIva: 0,
+        acuerdoSoporte: 'VALORES DE PRUEBA - pendiente acuerdo de tarifas',
+      };
+      const tarifaExistente = await prisma.tarifa.findFirst({
+        where: { servicioId, tipoSolicitante, vigenciaDesde },
       });
+      if (tarifaExistente) {
+        await prisma.tarifa.update({ where: { id: tarifaExistente.id }, data: datosTarifa });
+      } else {
+        await prisma.tarifa.create({ data: { servicioId, tipoSolicitante, vigenciaDesde, ...datosTarifa } });
+      }
     }
   }
 }

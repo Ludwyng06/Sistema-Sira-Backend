@@ -4,11 +4,19 @@ import type { Prisma } from '../../../generated/prisma/client.js';
 import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import { ErrorDominio, noEncontrado } from '../../../shared/errores/error-dominio.js';
 import { PrismaService } from '../../../shared/prisma/prisma.service.js';
+import { TarifarioService } from '../../tarifario/services/tarifario.service.js';
+import {
+  type FranjaCalculada,
+  type ResumenItemReserva,
+  resumirItemReserva,
+  totalizarSolicitud,
+} from '../dominio/totales.js';
 import type {
   ActualizarSolicitudDto,
   CrearSolicitudDto,
   FiltrosSolicitudesDto,
   PaginaSolicitudesDto,
+  EstimadoSolicitudDto,
   SolicitudDetalleDto,
   SolicitudDto,
 } from '../dto/solicitud.dto.js';
@@ -41,7 +49,19 @@ export function aDto(fila: FilaSolicitud): SolicitudDto {
 
 type FilaDetalle = Prisma.SolicitudGetPayload<{
   include: {
-    reservas: { include: { espacio: { select: { codigo: true; nombre: true; tipoEspacioId: true } } } };
+    reservas: {
+      include: {
+        espacio: {
+          select: {
+            codigo: true;
+            nombre: true;
+            tipoEspacioId: true;
+            depositoValorFijo: true;
+            depositoPorcentaje: true;
+          };
+        };
+      };
+    };
     servicios: { include: { servicio: { select: { nombre: true } } } };
     decisiones: true;
     cotizaciones: true;
@@ -49,7 +69,17 @@ type FilaDetalle = Prisma.SolicitudGetPayload<{
   };
 }>;
 
-function aDetalle(fila: FilaDetalle): SolicitudDetalleDto {
+/** Líneas recalculadas con la tarifa vigente; solo existen mientras no hay cotización (RN-05). */
+interface LineasVigentes {
+  reservas: Map<string, ResumenItemReserva>;
+  servicios: Map<string, { valorUnitario: number; subtotal: number }>;
+}
+
+function aDetalle(
+  fila: FilaDetalle,
+  estimado: EstimadoSolicitudDto,
+  vigentes: LineasVigentes | null,
+): SolicitudDetalleDto {
   const cotizacion = fila.cotizaciones[0];
   return {
     ...aDto(fila),
@@ -66,6 +96,7 @@ function aDetalle(fila: FilaDetalle): SolicitudDetalleDto {
       valorUnitario: r.valorUnitario,
       recargos: r.recargos,
       subtotal: r.subtotal,
+      ...vigentes?.reservas.get(r.id),
     })),
     actas: fila.actas.map((acta) => ({
       id: acta.id,
@@ -81,6 +112,7 @@ function aDetalle(fila: FilaDetalle): SolicitudDetalleDto {
       cantidad: s.cantidad,
       valorUnitario: s.valorUnitario,
       subtotal: s.subtotal,
+      ...vigentes?.servicios.get(s.id),
       estadoConfirmacion: s.estadoConfirmacion,
       observaciones: s.observaciones,
     })),
@@ -101,6 +133,7 @@ function aDetalle(fila: FilaDetalle): SolicitudDetalleDto {
           validaHasta: cotizacion.validaHasta.toISOString(),
         }
       : null,
+    estimado,
   };
 }
 
@@ -124,7 +157,10 @@ export async function bloquearBorrador(tx: Prisma.TransactionClient, solicitudId
 
 @Injectable()
 export class SolicitudesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly tarifario: TarifarioService,
+  ) {}
 
   async crear(datos: CrearSolicitudDto, usuario: UsuarioAutenticado): Promise<SolicitudDto> {
     const solicitante = await this.perfilDe(usuario);
@@ -167,7 +203,17 @@ export class SolicitudesService {
       include: {
         reservas: {
           orderBy: { inicio: 'asc' },
-          include: { espacio: { select: { codigo: true, nombre: true, tipoEspacioId: true } } },
+          include: {
+            espacio: {
+              select: {
+                codigo: true,
+                nombre: true,
+                tipoEspacioId: true,
+                depositoValorFijo: true,
+                depositoPorcentaje: true,
+              },
+            },
+          },
         },
         servicios: { include: { servicio: { select: { nombre: true } } } },
         decisiones: { orderBy: { decididaEn: 'asc' } },
@@ -176,7 +222,8 @@ export class SolicitudesService {
       },
     });
     if (!fila) throw noEncontrado('La solicitud');
-    return aDetalle(fila);
+    const { estimado, vigentes } = await this.estimar(fila);
+    return aDetalle(fila, estimado, vigentes);
   }
 
   /** 404 si la solicitud no existe o está fuera del alcance del usuario (dueño o bandeja por rol). */
@@ -185,6 +232,65 @@ export class SolicitudesService {
     if (alternativas.length === 0) throw noEncontrado('La solicitud');
     const fila = await this.prisma.solicitud.findFirst({ where: { id, OR: alternativas }, select: { id: true } });
     if (!fila) throw noEncontrado('La solicitud');
+  }
+
+  /**
+   * RF-RES-04. Con cotización emitida, el estimado sale de ella y de los ítems congelados (RN-05).
+   * Sin cotización, franjas y servicios se recalculan con la tarifa vigente y esos mismos valores
+   * alimentan las líneas del detalle, de modo que línea y estimado coinciden.
+   */
+  private async estimar(
+    fila: FilaDetalle,
+  ): Promise<{ estimado: EstimadoSolicitudDto; vigentes: LineasVigentes | null }> {
+    const cotizacion = fila.cotizaciones[0];
+    if (cotizacion) {
+      const recargos = fila.reservas.reduce((suma, r) => suma + r.recargos, 0);
+      return {
+        vigentes: null,
+        estimado: {
+          base: cotizacion.subtotal - recargos,
+          recargos,
+          subtotal: cotizacion.subtotal,
+          iva: cotizacion.iva,
+          deposito: cotizacion.depositoGarantia,
+          total: cotizacion.subtotal + cotizacion.iva,
+        },
+      };
+    }
+
+    const franjas: FranjaCalculada[] = [];
+    const reservas = new Map<string, ResumenItemReserva>();
+    for (const r of fila.reservas) {
+      let concepto: { base: number; recargos: number; subtotal: number; iva: number };
+      try {
+        const calculo = await this.tarifario.calcular({
+          espacioId: r.espacioId,
+          tipoSolicitante: fila.tipoTarifa,
+          inicio: r.inicio,
+          fin: r.fin,
+        });
+        reservas.set(r.id, resumirItemReserva(calculo));
+        concepto = calculo;
+      } catch (error) {
+        if (!(error instanceof ErrorDominio) || error.codigo !== 'TARIFA_NO_DEFINIDA') throw error;
+        // Sin tarifa vigente: se usan los valores ya guardados en el ítem.
+        concepto = { base: r.subtotal - r.recargos, recargos: r.recargos, subtotal: r.subtotal, iva: 0 };
+      }
+      franjas.push({
+        ...concepto,
+        espacioId: r.espacioId,
+        depositoValorFijo: r.espacio.depositoValorFijo,
+        depositoPorcentaje: Number(r.espacio.depositoPorcentaje?.toString() ?? 0),
+      });
+    }
+
+    const servicios = new Map<string, { valorUnitario: number; subtotal: number }>();
+    for (const item of fila.servicios) {
+      const valorUnitario = await this.tarifario.valorServicio(item.servicioId, fila.tipoTarifa);
+      servicios.set(item.id, { valorUnitario, subtotal: valorUnitario * item.cantidad });
+    }
+    const subtotalServicios = [...servicios.values()].reduce((suma, v) => suma + v.subtotal, 0);
+    return { estimado: totalizarSolicitud(franjas, subtotalServicios), vigentes: { reservas, servicios } };
   }
 
   private async alternativasVisibles(usuario: UsuarioAutenticado): Promise<Prisma.SolicitudWhereInput[]> {
