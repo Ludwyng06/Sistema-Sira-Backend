@@ -21,6 +21,7 @@ function entorno() {
     espacio: {
       findMany: vi.fn().mockResolvedValue([fila]), count: vi.fn().mockResolvedValue(1),
       findUnique: vi.fn().mockResolvedValue(fila), create: vi.fn().mockResolvedValue(fila),
+      findFirst: vi.fn().mockResolvedValue(fila), update: vi.fn().mockResolvedValue(fila),
     },
     bloque: { findFirst: vi.fn().mockResolvedValue(fila.bloque) },
     tipoEspacio: { findUnique: vi.fn().mockResolvedValue({ id: ID, ...fila.tipo }) },
@@ -77,5 +78,65 @@ describe('Gestión administrativa de espacios', () => {
     e.prisma.espacio.create.mockClear();
     await expect(e.servicio.crear(datos)).rejects.toMatchObject({ codigo: 'RESPONSABLE_NO_VALIDO', status: 422 });
     expect(e.prisma.espacio.create).not.toHaveBeenCalled();
+  });
+
+  describe('aval y responsable', () => {
+    const MENSAJE = 'Asigna un responsable al espacio antes de exigir su aval.';
+    const nuevo = { sede: 'MOC', bloque: 'A', tipo: 'AULA', codigo: 'A-102', nombre: 'Aula', piso: 1, capacidadPersonas: 30 };
+
+    it('crear con requiereAval=true y sin responsable da 422 AVAL_SIN_RESPONSABLE', async () => {
+      const e = entorno();
+      e.prisma.espacio.findUnique.mockResolvedValue(null as never);
+      await expect(e.servicio.crear({ ...nuevo, requiereAval: true })).rejects.toMatchObject({
+        codigo: 'AVAL_SIN_RESPONSABLE', status: 422, message: MENSAJE,
+      });
+      expect(e.prisma.espacio.create).not.toHaveBeenCalled();
+    });
+
+    it('crear sin indicar requiereAval lo exige solo si hay responsable', async () => {
+      const e = entorno();
+      e.prisma.espacio.findUnique.mockResolvedValue(null as never);
+      await e.servicio.crear(nuevo);
+      expect(e.prisma.espacio.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ requiereAval: false }) }),
+      );
+      await e.servicio.crear({ ...nuevo, responsableId: ID });
+      expect(e.prisma.espacio.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ requiereAval: true, responsableId: ID }) }),
+      );
+    });
+
+    it('actualizar no permite exigir aval en un espacio sin responsable', async () => {
+      const e = entorno();
+      e.prisma.espacio.findFirst.mockResolvedValue({ ...fila, requiereAval: false, responsableId: null } as never);
+      await expect(e.servicio.actualizar('A-101', { requiereAval: true })).rejects.toMatchObject({
+        codigo: 'AVAL_SIN_RESPONSABLE', status: 422, message: MENSAJE,
+      });
+      expect(e.prisma.espacio.update).not.toHaveBeenCalled();
+    });
+
+    it('actualizar no permite quitar el responsable de un espacio que exige aval', async () => {
+      const e = entorno();
+      await expect(e.servicio.actualizar('A-101', { responsableId: null })).rejects.toMatchObject({
+        codigo: 'AVAL_SIN_RESPONSABLE', status: 422,
+      });
+      expect(e.prisma.espacio.update).not.toHaveBeenCalled();
+    });
+
+    it('se puede quitar el responsable si a la vez se deja de exigir el aval, y asignar uno y exigirlo', async () => {
+      const e = entorno();
+      await e.servicio.actualizar('A-101', { responsableId: null, requiereAval: false });
+      expect(e.prisma.espacio.update).toHaveBeenCalledTimes(1);
+      e.prisma.espacio.findFirst.mockResolvedValue({ ...fila, requiereAval: false, responsableId: null } as never);
+      await e.servicio.actualizar('A-101', { responsableId: ID, requiereAval: true });
+      expect(e.prisma.espacio.update).toHaveBeenCalledTimes(2);
+    });
+
+    it('editar otros datos de un espacio antiguo sin responsable no se bloquea', async () => {
+      const e = entorno();
+      e.prisma.espacio.findFirst.mockResolvedValue({ ...fila, requiereAval: true, responsableId: null } as never);
+      await e.servicio.actualizar('A-101', { nombre: 'Aula nueva' });
+      expect(e.prisma.espacio.update).toHaveBeenCalledTimes(1);
+    });
   });
 });

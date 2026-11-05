@@ -231,6 +231,27 @@ describe('DecisionesService.decidir', () => {
     });
   });
 
+  it('aprobar con aval exigido pero espacio sin responsable da AVAL_SIN_RESPONSABLE, no AVAL_PENDIENTE', async () => {
+    const e = crearEntorno(solicitud({ reservas: [reserva({ responsableId: null })] }));
+    const error = await e.servicio
+      .decidir(SOLICITUD_ID, { tipo: 'APROBACION', resultado: 'APROBADA' }, aprobador, CONTEXTO)
+      .catch((x: unknown) => x);
+    expect(error).toMatchObject({
+      codigo: 'AVAL_SIN_RESPONSABLE',
+      status: 422,
+      message: 'Este espacio exige aval pero no tiene responsable asignado. Pide a administración que asigne uno.',
+    });
+    expect(e.tx.cotizacion.create).not.toHaveBeenCalled();
+  });
+
+  it('si otro espacio exige aval y sí tiene responsable, sigue siendo AVAL_PENDIENTE', async () => {
+    const e = crearEntorno(solicitud({ reservas: [reserva({ responsableId: null }), reserva()] }));
+    const error = await e.servicio
+      .decidir(SOLICITUD_ID, { tipo: 'APROBACION', resultado: 'APROBADA' }, aprobador, CONTEXTO)
+      .catch((x: unknown) => x);
+    expect(error).toMatchObject({ codigo: 'AVAL_PENDIENTE', status: 422 });
+  });
+
   it('una solicitud exenta aprobada queda CONFIRMADA, con valor de referencia y sin pago', async () => {
     const e = crearEntorno(solicitud({ esExenta: true, tipoTarifa: 'INTERNO', decisiones: avalOtorgado }));
     const r = await e.servicio.decidir(

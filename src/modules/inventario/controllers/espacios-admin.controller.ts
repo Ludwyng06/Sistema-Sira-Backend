@@ -59,7 +59,7 @@ export class EspaciosAdminController {
   }
 
   @Post()
-  @ApiOperation({ summary: 'Crea un espacio.', description: 'Permite asignar un responsable activo. Errores: 422 RESPONSABLE_NO_VALIDO.' })
+  @ApiOperation({ summary: 'Crea un espacio.', description: 'Permite asignar un responsable activo. Errores: 422 RESPONSABLE_NO_VALIDO o AVAL_SIN_RESPONSABLE (exigir aval requiere responsable).' })
   @ApiErrores(400, 401, 403, 422)
   @ApiCreatedResponse({ type: EspacioCreadoDto })
   @ApiConflictResponse({ description: 'Ya existe un espacio con ese código.' })
@@ -74,7 +74,7 @@ export class EspaciosAdminController {
     description:
       'El código y el bloque no cambian.\n\n' +
       'Errores: 404 NO_ENCONTRADO, TIPO_ESPACIO_NO_ENCONTRADO o DEPENDENCIA_NO_ENCONTRADA; ' +
-      '422 PISO_INVALIDO o RESPONSABLE_NO_VALIDO.',
+      '422 PISO_INVALIDO, RESPONSABLE_NO_VALIDO o AVAL_SIN_RESPONSABLE (no se exige aval sin responsable ni se quita el responsable de un espacio con aval).',
   })
   @ApiOkResponse({ type: EspacioCreadoDto })
   @ApiNotFoundResponse({

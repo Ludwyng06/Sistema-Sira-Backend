@@ -51,6 +51,17 @@ function aAdministracion(espacio: FilaAdministracion): EspacioAdminDto {
   };
 }
 
+/** Un espacio que exige aval necesita un responsable que pueda darlo. */
+function exigirResponsableParaAval(requiereAval: boolean, responsableId: string | null): void {
+  if (requiereAval && !responsableId) {
+    throw new ErrorDominio(
+      'AVAL_SIN_RESPONSABLE',
+      'Asigna un responsable al espacio antes de exigir su aval.',
+      422,
+    );
+  }
+}
+
 @Injectable()
 export class EspaciosAdminService {
   constructor(
@@ -162,6 +173,9 @@ export class EspaciosAdminService {
     }
 
     await this.validarResponsable(datos.responsableId);
+    // Sin indicarlo, el aval se exige solo si hay alguien que pueda darlo.
+    const requiereAval = datos.requiereAval ?? Boolean(datos.responsableId);
+    exigirResponsableParaAval(requiereAval, datos.responsableId ?? null);
     const espacio = await this.prisma.espacio.create({
       data: {
         bloqueId: bloque.id,
@@ -175,7 +189,7 @@ export class EspaciosAdminService {
         areaM2: datos.areaM2,
         descripcion: datos.descripcion,
         condicionesUso: datos.condicionesUso,
-        requiereAval: datos.requiereAval,
+        requiereAval,
         esReservable: datos.esReservable,
         minutosMontaje: datos.minutosMontaje,
         minutosDesmontaje: datos.minutosDesmontaje,
@@ -250,6 +264,12 @@ export class EspaciosAdminService {
     }
 
     await this.validarResponsable(datos.responsableId);
+    if (datos.requiereAval !== undefined || datos.responsableId !== undefined) {
+      exigirResponsableParaAval(
+        datos.requiereAval ?? actual.requiereAval,
+        datos.responsableId !== undefined ? datos.responsableId : actual.responsableId,
+      );
+    }
 
     const espacio = await this.prisma.espacio.update({
       where: { id: actual.id },

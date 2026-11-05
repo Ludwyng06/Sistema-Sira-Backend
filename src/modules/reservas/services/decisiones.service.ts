@@ -126,6 +126,15 @@ export class DecisionesService {
         throw new ErrorDominio('DECISION_YA_REGISTRADA', 'El aval de esta solicitud ya fue otorgado.', 409);
       }
     } else if (requiereAval && !avalAprobado) {
+      // Datos viejos: si ningún espacio que exige aval tiene responsable, nadie podrá darlo.
+      const hayQuienAvale = solicitud.reservas.some((r) => r.espacio.requiereAval && r.espacio.responsableId);
+      if (!hayQuienAvale) {
+        throw new ErrorDominio(
+          'AVAL_SIN_RESPONSABLE',
+          'Este espacio exige aval pero no tiene responsable asignado. Pide a administración que asigne uno.',
+          422,
+        );
+      }
       throw new ErrorDominio(
         'AVAL_PENDIENTE',
         'El responsable del espacio debe dar su aval antes de la aprobación.',

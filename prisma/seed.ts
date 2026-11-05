@@ -445,6 +445,8 @@ async function inventario(ids: Map<string, string>, deps: Map<string, string>) {
       tipoEspacioId: tipo.id,
       dependenciaId: deps.get('VICERRECTORIA_ADMINISTRATIVA'),
       responsableId: e.codigo === 'D-101' ? responsableAuditorio : null,
+      // Valor de ejemplo: solo se exige aval donde hay responsable que pueda darlo.
+      requiereAval: e.codigo === 'D-101',
       nombre: e.nombre,
       piso,
       areaM2: e.areaM2 ?? null,
