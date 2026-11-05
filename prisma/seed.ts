@@ -215,9 +215,24 @@ const TIPOS = [
 ] as const;
 
 const BLOQUES = [
-  { codigo: 'A', nombre: 'Bloque A', pisos: 3 },
-  { codigo: 'B', nombre: 'Bloque B', pisos: 2 },
-  { codigo: 'C', nombre: 'Bloque C', pisos: 2 },
+  {
+    codigo: 'A',
+    nombre: 'Bloque A',
+    pisos: 2,
+    descripcion: 'Edificio académico de aulas, salas de informática y oficinas (2 pisos)',
+  },
+  {
+    codigo: 'B',
+    nombre: 'Bloque B',
+    pisos: 2,
+    descripcion: 'Aulas B-101 a B-205, auditorio y laboratorios de ingeniería (2 pisos)',
+  },
+  {
+    codigo: 'C',
+    nombre: 'Bloque C',
+    pisos: 2,
+    descripcion: 'Aulas C-101 a C-204 y escenarios deportivos: cancha sintética y coliseo (2 pisos)',
+  },
 ] as const;
 
 interface EspacioEjemplo {
@@ -225,30 +240,71 @@ interface EspacioEjemplo {
   nombre: string;
   tipo: (typeof TIPOS)[number]['codigo'];
   capacidad: number;
+  piso?: number;
   elementos: [nombre: string, cantidad: number][];
   extra?: { minutosMontaje: number; minutosDesmontaje: number; depositoPorcentaje: number };
 }
 
 const ESPACIOS: EspacioEjemplo[] = [
-  { codigo: 'A-101', nombre: 'Aula 101', tipo: 'AULA', capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
-  { codigo: 'A-102', nombre: 'Aula 102', tipo: 'AULA', capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
-  { codigo: 'A-201', nombre: 'Aula 201', tipo: 'AULA', capacidad: 35, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 35]] },
-  { codigo: 'A-202', nombre: 'Sala de informática A-202', tipo: 'SALA_INFORMATICA', capacidad: 30, elementos: [['Computadores', 30], ['Videobeam', 1], ['Tablero', 1]] },
-  { codigo: 'A-301', nombre: 'Sala de juntas A-301', tipo: 'SALA_JUNTAS', capacidad: 12, elementos: [['Videobeam', 1], ['Tablero', 1]] },
+  // Bloque A — Piso 1 (según plano TOPOGRAFIA UNIPUTUMAYO.dwg)
+  { codigo: 'A-101', nombre: 'Oficina 101', tipo: 'SALA_JUNTAS', piso: 1, capacidad: 12, elementos: [['Videobeam', 1], ['Tablero', 1]] },
+  { codigo: 'A-102', nombre: 'Oficina 102', tipo: 'SALA_JUNTAS', piso: 1, capacidad: 12, elementos: [['Videobeam', 1], ['Tablero', 1]] },
+  { codigo: 'A-103', nombre: 'Oficina 103', tipo: 'SALA_JUNTAS', piso: 1, capacidad: 10, elementos: [['Tablero', 1]] },
+  { codigo: 'A-104', nombre: 'Oficina 104', tipo: 'SALA_JUNTAS', piso: 1, capacidad: 10, elementos: [['Tablero', 1]] },
+  { codigo: 'A-105', nombre: 'Aula 105', tipo: 'AULA', piso: 1, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'A-106', nombre: 'Aula 106', tipo: 'AULA', piso: 1, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'A-107', nombre: 'Aula 107', tipo: 'AULA', piso: 1, capacidad: 35, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 35]] },
+  { codigo: 'A-108', nombre: 'Aula 108', tipo: 'AULA', piso: 1, capacidad: 35, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 35]] },
+  { codigo: 'A-109', nombre: 'Aula 109', tipo: 'AULA', piso: 1, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'A-110', nombre: 'Aula 110', tipo: 'AULA', piso: 1, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'A-111', nombre: 'Aula 111', tipo: 'AULA', piso: 1, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'A-112', nombre: 'Aula 112', tipo: 'AULA', piso: 1, capacidad: 35, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 35]] },
+  { codigo: 'A-113', nombre: 'Aula 113', tipo: 'AULA', piso: 1, capacidad: 35, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 35]] },
+  // Bloque A — Piso 2 (según plano TOPOGRAFIA UNIPUTUMAYO.dwg)
+  { codigo: 'A-114', nombre: 'Aula 114', tipo: 'AULA', piso: 2, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'A-115', nombre: 'Aula 115', tipo: 'AULA', piso: 2, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'A-116', nombre: 'Aula 116', tipo: 'AULA', piso: 2, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'A-117', nombre: 'Aula 117', tipo: 'AULA', piso: 2, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'A-118', nombre: 'Sala de informática 118', tipo: 'SALA_INFORMATICA', piso: 2, capacidad: 30, elementos: [['Computadores', 30], ['Videobeam', 1], ['Tablero', 1]] },
+  { codigo: 'A-119', nombre: 'Sala de informática 119', tipo: 'SALA_INFORMATICA', piso: 2, capacidad: 30, elementos: [['Computadores', 30], ['Videobeam', 1], ['Tablero', 1]] },
+  { codigo: 'A-120', nombre: 'Sala de informática 120', tipo: 'SALA_INFORMATICA', piso: 2, capacidad: 30, elementos: [['Computadores', 30], ['Videobeam', 1], ['Tablero', 1]] },
+  { codigo: 'A-121', nombre: 'Sala de informática 121', tipo: 'SALA_INFORMATICA', piso: 2, capacidad: 30, elementos: [['Computadores', 30], ['Videobeam', 1], ['Tablero', 1]] },
+  { codigo: 'A-122', nombre: 'Aula 122', tipo: 'AULA', piso: 2, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'A-123', nombre: 'Sala de informática 123', tipo: 'SALA_INFORMATICA', piso: 2, capacidad: 30, elementos: [['Computadores', 30], ['Videobeam', 1], ['Tablero', 1]] },
+  { codigo: 'A-124', nombre: 'Aula 124', tipo: 'AULA', piso: 2, capacidad: 45, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 45]] },
+  { codigo: 'A-125', nombre: 'Aula 125', tipo: 'AULA', piso: 2, capacidad: 45, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 45]] },
+
+  // Bloque B — Piso 1 y Piso 2 (P1. B101–B105 y P2. B201–B205 + Auditorio y Laboratorios del plano)
   {
     codigo: 'B-101',
-    nombre: 'Auditorio Mayor',
+    nombre: 'Aula B-101 · Auditorio Aula Múltiple',
     tipo: 'AUDITORIO',
-    capacidad: 300,
-    elementos: [['Sonido del auditorio', 1], ['Videobeam', 2], ['Sillas universitarias', 300]],
+    piso: 1,
+    capacidad: 216,
+    elementos: [['Sonido del auditorio', 1], ['Videobeam', 2], ['Sillas universitarias', 216]],
     extra: { minutosMontaje: 120, minutosDesmontaje: 60, depositoPorcentaje: 20 },
   },
-  { codigo: 'B-102', nombre: 'Laboratorio de Redes', tipo: 'LABORATORIO', capacidad: 25, elementos: [['Switches', 6], ['Computadores', 25], ['Tablero', 1]] },
-  { codigo: 'B-201', nombre: 'Laboratorio de Química', tipo: 'LABORATORIO', capacidad: 20, elementos: [['Tablero', 1]] },
-  { codigo: 'B-202', nombre: 'Aula audiovisual', tipo: 'AULA', capacidad: 50, elementos: [['Videobeam', 1], ['Sillas universitarias', 50]] },
-  { codigo: 'C-101', nombre: 'Cancha múltiple', tipo: 'ESCENARIO_DEPORTIVO', capacidad: 200, elementos: [] },
-  { codigo: 'C-102', nombre: 'Sala de informática C-102', tipo: 'SALA_INFORMATICA', capacidad: 35, elementos: [['Computadores', 35], ['Videobeam', 1]] },
-  { codigo: 'C-201', nombre: 'Aula 201 (bloque C)', tipo: 'AULA', capacidad: 45, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 45]] },
+  { codigo: 'B-102', nombre: 'Aula B-102 · Laboratorio Ingeniería de Sistemas', tipo: 'LABORATORIO', piso: 1, capacidad: 30, elementos: [['Switches', 6], ['Computadores', 25], ['Tablero', 1]] },
+  { codigo: 'B-103', nombre: 'Aula B-103 · Laboratorio Ingeniería Ambiental', tipo: 'LABORATORIO', piso: 1, capacidad: 30, elementos: [['Tablero', 1], ['Mesas de laboratorio', 8]] },
+  { codigo: 'B-104', nombre: 'Aula B-104 · Laboratorio Ingeniería Civil', tipo: 'LABORATORIO', piso: 1, capacidad: 30, elementos: [['Tablero', 1], ['Mesas de laboratorio', 8]] },
+  { codigo: 'B-105', nombre: 'Aula B-105 · Laboratorio Ingeniería Forestal', tipo: 'LABORATORIO', piso: 1, capacidad: 30, elementos: [['Tablero', 1], ['Mesas de laboratorio', 8]] },
+  { codigo: 'B-201', nombre: 'Aula B-201 · Laboratorio Mecánica de Fluidos', tipo: 'LABORATORIO', piso: 2, capacidad: 20, elementos: [['Tablero', 1]] },
+  { codigo: 'B-202', nombre: 'Aula B-202 · Aula Audiovisual', tipo: 'AULA', piso: 2, capacidad: 50, elementos: [['Videobeam', 1], ['Sillas universitarias', 50]] },
+  { codigo: 'B-203', nombre: 'Aula B-203', tipo: 'AULA', piso: 2, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'B-204', nombre: 'Aula B-204', tipo: 'AULA', piso: 2, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'B-205', nombre: 'Aula B-205 · Aula Informática', tipo: 'SALA_INFORMATICA', piso: 2, capacidad: 24, elementos: [['Computadores', 24], ['Videobeam', 1], ['Tablero', 1]] },
+
+  // Bloque C — Piso 1 y Piso 2 (P1. C101–C104, P2. C201–C204, Cancha Sintética y Coliseo)
+  { codigo: 'C-101', nombre: 'Aula C-101', tipo: 'AULA', piso: 1, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'C-102', nombre: 'Aula C-102 · Sala de informática', tipo: 'SALA_INFORMATICA', piso: 1, capacidad: 35, elementos: [['Computadores', 35], ['Videobeam', 1]] },
+  { codigo: 'C-103', nombre: 'Aula C-103', tipo: 'AULA', piso: 1, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'C-104', nombre: 'Aula C-104', tipo: 'AULA', piso: 1, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'C-105', nombre: 'Cancha Sintética', tipo: 'ESCENARIO_DEPORTIVO', piso: 1, capacidad: 200, elementos: [['Arcos de fútbol', 2], ['Iluminación nocturna', 1]] },
+  { codigo: 'C-106', nombre: 'Coliseo Cubierto', tipo: 'ESCENARIO_DEPORTIVO', piso: 1, capacidad: 500, elementos: [['Graderías', 1], ['Tablero electrónico', 1], ['Sonido ambiental', 1]] },
+  { codigo: 'C-201', nombre: 'Aula C-201', tipo: 'AULA', piso: 2, capacidad: 45, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 45]] },
+  { codigo: 'C-202', nombre: 'Aula C-202', tipo: 'AULA', piso: 2, capacidad: 45, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 45]] },
+  { codigo: 'C-203', nombre: 'Aula C-203', tipo: 'AULA', piso: 2, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
+  { codigo: 'C-204', nombre: 'Aula C-204', tipo: 'AULA', piso: 2, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
 ];
 
 /** Tarifa por hora de prueba según el tipo de solicitante. */
@@ -276,18 +332,32 @@ async function inventario(ids: Map<string, string>, deps: Map<string, string>) {
   for (const [indice, b] of BLOQUES.entries()) {
     const bloque = await prisma.bloque.upsert({
       where: { sedeId_codigo: { sedeId: sede.id, codigo: b.codigo } },
-      update: {},
+      update: {
+        nombre: b.nombre,
+        descripcion: b.descripcion,
+        numeroPisos: b.pisos,
+        orden: indice + 1,
+      },
       create: {
         sedeId: sede.id,
         codigo: b.codigo,
         nombre: b.nombre,
-        descripcion: `${b.nombre} de la sede Mocoa ${EJEMPLO}`,
+        descripcion: b.descripcion,
         numeroPisos: b.pisos,
         orden: indice + 1,
       },
     });
     bloques.set(b.codigo, bloque.id);
   }
+
+  // Dejar fuera de servicio espacios que no pertenezcan al plano real de la sede (p. ej. piso 3 inexistente A-301, A-201, A-202)
+  await prisma.espacio.updateMany({
+    where: {
+      codigo: { notIn: ESPACIOS.map((e) => e.codigo) },
+      bloqueId: { in: [...bloques.values()] },
+    },
+    data: { estado: 'FUERA_DE_SERVICIO' },
+  });
 
   const tipos = new Map<string, { id: string; base: number }>();
   for (const t of TIPOS) {
@@ -315,7 +385,7 @@ async function inventario(ids: Map<string, string>, deps: Map<string, string>) {
   for (const e of ESPACIOS) {
     const bloqueId = bloques.get(e.codigo.charAt(0))!;
     const tipo = tipos.get(e.tipo)!;
-    const piso = Number(e.codigo.split('-')[1].charAt(0));
+    const piso = e.piso ?? Number(e.codigo.split('-')[1].charAt(0));
     const datos = {
       bloqueId,
       tipoEspacioId: tipo.id,
@@ -324,7 +394,8 @@ async function inventario(ids: Map<string, string>, deps: Map<string, string>) {
       nombre: e.nombre,
       piso,
       capacidadPersonas: e.capacidad,
-      descripcion: `${e.nombre} ${EJEMPLO}`,
+      descripcion: `${e.nombre} · Sede Mocoa`,
+      estado: 'DISPONIBLE' as const,
       minutosMontaje: e.extra?.minutosMontaje ?? 0,
       minutosDesmontaje: e.extra?.minutosDesmontaje ?? 0,
       depositoPorcentaje: e.extra?.depositoPorcentaje ?? null,
@@ -613,7 +684,7 @@ async function main() {
   await horarios(espacios);
   await bloqueos(ids, espacios);
   await servicios();
-  console.log('Siembra completada: sede MOC, bloques A/B/C, 12 espacios con horario y usuarios de prueba.');
+  console.log(`Siembra completada: sede MOC, bloques A/B/C (2 pisos cada uno), ${ESPACIOS.length} espacios con horario y usuarios de prueba.`);
 }
 
 main()
