@@ -37,7 +37,14 @@ function crearEntorno() {
   const prisma = {
     $transaction: vi.fn(),
     solicitud: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
-    espacio: { findFirst: vi.fn().mockResolvedValue({ id: ESPACIO_ID }) },
+    espacio: {
+      findFirst: vi.fn().mockResolvedValue({
+        id: ESPACIO_ID,
+        horarios: [],
+        tipo: { anticipacionMinimaDias: 2, anticipacionEnHabiles: true },
+      }),
+    },
+    festivo: { findMany: vi.fn().mockResolvedValue([]) },
     reservaItem: {
       findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn((args: { data: Record<string, unknown> }) =>
@@ -118,6 +125,67 @@ describe('ItemsService reservas', () => {
     const error = await rechazo(e.servicio.agregarReserva(SOLICITUD_ID, reserva(cambios), usuario));
     expect(error).toMatchObject({ codigo: 'RANGO_INVALIDO', status: 400 });
     expect(e.prisma.reservaItem.create).not.toHaveBeenCalled();
+  });
+
+  it('rechaza con 422 FUERA_DE_HORARIO un domingo cuando el espacio solo opera de lunes a viernes', async () => {
+    const e = crearEntorno();
+    e.prisma.espacio.findFirst.mockResolvedValue({
+      id: ESPACIO_ID,
+      horarios: [{ diaSemana: 2, abre: '07:00', cierra: '18:00' }],
+      tipo: { anticipacionMinimaDias: 2, anticipacionEnHabiles: true },
+    });
+    const domingo = { inicio: '2026-11-08T13:00:00.000Z', fin: '2026-11-08T15:00:00.000Z' };
+    const error = await rechazo(e.servicio.agregarReserva(SOLICITUD_ID, reserva(domingo), usuario));
+    expect(error).toMatchObject({
+      codigo: 'FUERA_DE_HORARIO',
+      status: 422,
+      message: 'El espacio no opera el día seleccionado.',
+    });
+    expect(e.prisma.reservaItem.create).not.toHaveBeenCalled();
+  });
+
+  it('rechaza con 422 FUERA_DE_HORARIO una franja que pasa el cierre y acepta una dentro del horario', async () => {
+    const e = crearEntorno();
+    e.prisma.espacio.findFirst.mockResolvedValue({
+      id: ESPACIO_ID,
+      horarios: [{ diaSemana: 2, abre: '07:00', cierra: '12:00' }],
+      tipo: { anticipacionMinimaDias: 2, anticipacionEnHabiles: true },
+    });
+    // 08:00 a 12:00 de Bogotá el martes 3 de noviembre: dentro del horario.
+    await expect(e.servicio.agregarReserva(SOLICITUD_ID, reserva(), usuario)).resolves.toMatchObject({ id: 'r-1' });
+    const tarde = { inicio: '2026-11-03T15:00:00.000Z', fin: '2026-11-03T19:00:00.000Z' };
+    const error = await rechazo(e.servicio.agregarReserva(SOLICITUD_ID, reserva(tarde), usuario));
+    expect(error).toMatchObject({
+      codigo: 'FUERA_DE_HORARIO',
+      status: 422,
+      message: 'El espacio opera de 07:00 a 12:00 ese día.',
+    });
+  });
+
+  it('rechaza con 422 ANTICIPACION_INSUFICIENTE una franja sin la anticipación mínima', async () => {
+    const e = crearEntorno();
+    // Hoy es miércoles 21 de octubre: el viernes 23 tiene 2 hábiles; el jueves 22, 1.
+    const jueves = { inicio: '2026-10-22T13:00:00.000Z', fin: '2026-10-22T15:00:00.000Z' };
+    const error = await rechazo(e.servicio.agregarReserva(SOLICITUD_ID, reserva(jueves), usuario));
+    expect(error).toMatchObject({
+      codigo: 'ANTICIPACION_INSUFICIENTE',
+      status: 422,
+      message: 'Este tipo de espacio se solicita con 2 días hábiles de anticipación.',
+    });
+    expect(e.prisma.reservaItem.create).not.toHaveBeenCalled();
+
+    const viernes = { inicio: '2026-10-23T13:00:00.000Z', fin: '2026-10-23T15:00:00.000Z' };
+    await expect(e.servicio.agregarReserva(SOLICITUD_ID, reserva(viernes), usuario)).resolves.toMatchObject({
+      id: 'r-1',
+    });
+  });
+
+  it('un festivo cuenta como no hábil en la anticipación', async () => {
+    const e = crearEntorno();
+    e.prisma.festivo.findMany.mockResolvedValue([{ fecha: new Date('2026-10-23T00:00:00.000Z') }]);
+    const viernes = { inicio: '2026-10-23T13:00:00.000Z', fin: '2026-10-23T15:00:00.000Z' };
+    const error = await rechazo(e.servicio.agregarReserva(SOLICITUD_ID, reserva(viernes), usuario));
+    expect(error).toMatchObject({ codigo: 'ANTICIPACION_INSUFICIENTE', status: 422 });
   });
 
   it('un espacio inexistente o fuera de servicio da 404', async () => {

@@ -24,6 +24,17 @@ export class FranjaDisponibilidadDto {
   etiqueta!: string;
 }
 
+export class HorarioOperacionDto {
+  @ApiProperty({ example: 1, description: 'Día de la semana: 0 = domingo … 6 = sábado.' })
+  diaSemana!: number;
+
+  @ApiProperty({ example: '06:00', description: 'Hora de apertura (HH:mm, hora de Bogotá).' })
+  abre!: string;
+
+  @ApiProperty({ example: '22:00', description: 'Hora de cierre (HH:mm, hora de Bogotá).' })
+  cierra!: string;
+}
+
 export class DisponibilidadDto {
   @ApiProperty({ format: 'uuid', example: '8a3b8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b' })
   espacioId!: string;
@@ -36,6 +47,22 @@ export class DisponibilidadDto {
 
   @ApiProperty({ type: [FranjaDisponibilidadDto], description: 'Franjas ocupadas, ordenadas por inicio.' })
   franjas!: FranjaDisponibilidadDto[];
+
+  @ApiProperty({
+    type: [HorarioOperacionDto],
+    description:
+      'Horario de operación del espacio, ordenado por día de la semana (0 = domingo). ' +
+      'Arreglo vacío: el espacio no tiene restricción de horario. Los días sin fila están cerrados.',
+  })
+  horarios!: HorarioOperacionDto[];
+
+  @ApiProperty({
+    example: '2026-11-10T05:00:00.000Z',
+    description:
+      'Primer instante (ISO 8601, UTC) en que puede empezar una franja según la anticipación mínima del tipo ' +
+      'de espacio (días hábiles y festivos incluidos): el inicio del primer día local de Bogotá que la cumple.',
+  })
+  reservableDesde!: string;
 }
 
 export class BloqueoCreadoDto {

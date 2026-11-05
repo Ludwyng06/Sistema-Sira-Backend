@@ -5,12 +5,13 @@ import { ConsecutivoService } from '../../../shared/consecutivos/consecutivo.ser
 import { ErrorDominio } from '../../../shared/errores/error-dominio.js';
 import { ParametroService } from '../../../shared/parametros/parametro.service.js';
 import { PrismaService } from '../../../shared/prisma/prisma.service.js';
-import { diaSemanaLocal, diasHabilesEntre, fechaLocal } from '../../../shared/tiempo/zona-horaria.js';
+import { fechaLocal } from '../../../shared/tiempo/zona-horaria.js';
 import { BusquedaService } from '../../disponibilidad/services/busqueda.service.js';
 import { evaluarAforo } from '../../inventario/dominio/aforo.js';
 import { NotificacionesService } from '../../notificaciones/services/notificaciones.service.js';
 import { TarifarioService } from '../../tarifario/services/tarifario.service.js';
 import { validarTransicion } from '../dominio/maquina-estados.js';
+import { horaLocal, validarAnticipacion, validarHorario } from '../dominio/reglas-franja.js';
 import type { AdvertenciaEnvioDto, SolicitudEnviadaDto } from '../dto/solicitud.dto.js';
 import { aDto, SolicitudesService } from './solicitudes.service.js';
 
@@ -47,18 +48,6 @@ const MS_MINUTO = 60_000;
 const MS_HORA = 3_600_000;
 const MS_DIA = 86_400_000;
 const CODIGO_EXCLUSION = '23P01';
-const FORMATO_HORA = new Intl.DateTimeFormat('en-GB', {
-  timeZone: 'America/Bogota',
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23',
-});
-
-function horaLocal(instante: Date, esFin = false): string {
-  const hora = FORMATO_HORA.format(instante);
-  return esFin && hora === '00:00' ? '24:00' : hora;
-}
-
 function esViolacionDeExclusion(error: unknown): boolean {
   const texto = JSON.stringify(error, Object.getOwnPropertyNames(error ?? {}));
   return texto.includes(CODIGO_EXCLUSION) || texto.includes('sin_solapamiento');
@@ -153,38 +142,12 @@ export class EnvioService {
         continue;
       }
 
-      // Un espacio sin horario configurado no se restringe; con horario, los días sin fila están cerrados.
-      const horario = espacio.horarios.find((h) => h.diaSemana === diaSemanaLocal(item.inicio));
-      if (
-        espacio.horarios.length > 0 &&
-        (!horario || horaLocal(item.inicio) < horario.abre || horaLocal(item.fin, true) > horario.cierra)
-      ) {
-        problemas.push({
-          codigo: 'FUERA_DE_HORARIO',
-          mensaje: horario
-            ? `El espacio opera de ${horario.abre} a ${horario.cierra} ese día.`
-            : 'El espacio no opera el día seleccionado.',
-          reservaId: item.id,
-        });
-      }
+      const problemaHorario = validarHorario(item.inicio, item.fin, espacio.horarios);
+      if (problemaHorario) problemas.push({ ...problemaHorario, reservaId: item.id });
 
-      const { anticipacionMinimaDias: minimo, anticipacionEnHabiles: enHabiles } = espacio.tipo;
-      anticipacionMaxima = Math.max(anticipacionMaxima, minimo);
-      const diasDisponibles = enHabiles
-        ? diasHabilesEntre(ahora, item.inicio, festivosIso)
-        : Math.round(
-            (Date.parse(`${fechaLocal(item.inicio)}T00:00:00Z`) - Date.parse(`${fechaLocal(ahora)}T00:00:00Z`)) /
-              MS_DIA,
-          );
-      if (diasDisponibles < minimo) {
-        problemas.push({
-          codigo: 'ANTICIPACION_INSUFICIENTE',
-          mensaje: `Este tipo de espacio se solicita con ${minimo} día${minimo === 1 ? '' : 's'}${
-            enHabiles ? ' hábiles' : ''
-          } de anticipación.`,
-          reservaId: item.id,
-        });
-      }
+      anticipacionMaxima = Math.max(anticipacionMaxima, espacio.tipo.anticipacionMinimaDias);
+      const problemaAnticipacion = validarAnticipacion(ahora, item.inicio, espacio.tipo, festivosIso);
+      if (problemaAnticipacion) problemas.push({ ...problemaAnticipacion, reservaId: item.id });
 
       if (borrador.asistentesEstimados > espacio.capacidadPersonas) {
         problemas.push({

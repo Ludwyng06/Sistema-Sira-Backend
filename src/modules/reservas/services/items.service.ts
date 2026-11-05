@@ -3,6 +3,7 @@ import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import { ErrorDominio, noEncontrado } from '../../../shared/errores/error-dominio.js';
 import { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import { fechaLocal } from '../../../shared/tiempo/zona-horaria.js';
+import { validarAnticipacion, validarHorario } from '../dominio/reglas-franja.js';
 import { TarifarioService } from '../../tarifario/services/tarifario.service.js';
 import type {
   AgregarReservaDto,
@@ -53,9 +54,38 @@ export class ItemsService {
 
     const espacio = await this.prisma.espacio.findFirst({
       where: { id: datos.espacioId, archivadoEn: null, esReservable: true, estado: { not: 'FUERA_DE_SERVICIO' } },
-      select: { id: true },
+      select: {
+        id: true,
+        horarios: { select: { diaSemana: true, abre: true, cierra: true } },
+        tipo: { select: { anticipacionMinimaDias: true, anticipacionEnHabiles: true } },
+      },
     });
     if (!espacio) throw noEncontrado('El espacio');
+
+    // Validación inmediata (RF-CAL-03, RF-CAL-06); el envío la repite porque la anticipación puede vencerse.
+    const ahora = new Date();
+    const problemaHorario = validarHorario(inicio, fin, espacio.horarios);
+    if (problemaHorario) throw new ErrorDominio(problemaHorario.codigo, problemaHorario.mensaje, 422);
+    const festivos = espacio.tipo.anticipacionEnHabiles
+      ? await this.prisma.festivo.findMany({
+          where: {
+            fecha: {
+              gte: new Date(`${fechaLocal(ahora)}T00:00:00.000Z`),
+              lte: new Date(`${fechaLocal(inicio)}T00:00:00.000Z`),
+            },
+          },
+          select: { fecha: true },
+        })
+      : [];
+    const problemaAnticipacion = validarAnticipacion(
+      ahora,
+      inicio,
+      espacio.tipo,
+      festivos.map((f) => f.fecha.toISOString().slice(0, 10)),
+    );
+    if (problemaAnticipacion) {
+      throw new ErrorDominio(problemaAnticipacion.codigo, problemaAnticipacion.mensaje, 422);
+    }
 
     const estimado = await this.tarifario.calcular(
       { espacioId: espacio.id, tipoSolicitante: solicitud.tipoTarifa, inicio, fin },

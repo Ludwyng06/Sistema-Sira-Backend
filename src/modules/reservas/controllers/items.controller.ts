@@ -29,7 +29,9 @@ export class ItemsController {
       'Estima el valor con el tarifario (no es la cotización). La disponibilidad se valida y se retiene ' +
       'al enviar la solicitud. Cada reserva termina el mismo día en que empieza; máximo 20 por solicitud.\n\n' +
       'Errores: 400 RANGO_INVALIDO; 404 NO_ENCONTRADO; 409 SOLICITUD_NO_EDITABLE o RESERVA_DUPLICADA; ' +
-      '422 LIMITE_DE_ITEMS o TARIFA_NO_DEFINIDA.',
+      '422 FUERA_DE_HORARIO (la franja no cabe en el horario de operación del espacio), ' +
+      'ANTICIPACION_INSUFICIENTE (no cumple la anticipación mínima del tipo de espacio), ' +
+      'LIMITE_DE_ITEMS o TARIFA_NO_DEFINIDA.',
   })
   @ApiCreatedResponse({ type: ReservaItemDto })
   @ApiErrores(400, 401, 404, 409, 422)

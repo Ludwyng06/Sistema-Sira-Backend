@@ -1,13 +1,20 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import type { ConsultaDisponibilidadDto } from '../dto/consulta-disponibilidad.dto.js';
 import { DisponibilidadService } from './disponibilidad.service.js';
 
 const ESPACIO_ID = '8a3b8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b';
 
-function crearEntorno(filas: unknown[] = [], espacio: unknown = { id: ESPACIO_ID }) {
+const ESPACIO = {
+  id: ESPACIO_ID,
+  horarios: [] as { diaSemana: number; abre: string; cierra: string }[],
+  tipo: { anticipacionMinimaDias: 2, anticipacionEnHabiles: true },
+};
+
+function crearEntorno(filas: unknown[] = [], espacio: unknown = ESPACIO) {
   const prisma = {
     espacio: { findFirst: vi.fn().mockResolvedValue(espacio) },
+    festivo: { findMany: vi.fn().mockResolvedValue([]) },
     $queryRaw: vi.fn().mockResolvedValue(filas),
   };
   return { servicio: new DisponibilidadService(prisma as unknown as PrismaService), prisma };
@@ -23,6 +30,50 @@ const consulta = (cambios: Partial<ConsultaDisponibilidadDto> = {}): ConsultaDis
 const rechazo = (promesa: Promise<unknown>): Promise<unknown> => promesa.catch((e: unknown) => e);
 
 describe('DisponibilidadService.consultar', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    // Jueves 22 de octubre de 2026, 10:00 en Bogotá.
+    vi.setSystemTime(new Date('2026-10-22T15:00:00.000Z'));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('devuelve el horario de operación y desde cuándo se puede reservar', async () => {
+    const horarios = [
+      { diaSemana: 1, abre: '07:00', cierra: '18:00' },
+      { diaSemana: 6, abre: '08:00', cierra: '12:00' },
+    ];
+    const { servicio, prisma } = crearEntorno([], { ...ESPACIO, horarios });
+    const resultado = await servicio.consultar(consulta());
+
+    expect(resultado.horarios).toEqual(horarios);
+    // Jueves + 2 días hábiles = lunes 26, a las 00:00 de Bogotá.
+    expect(resultado.reservableDesde).toBe('2026-10-26T05:00:00.000Z');
+    const { select } = prisma.espacio.findFirst.mock.calls[0]![0] as {
+      select: { horarios: { orderBy: unknown } };
+    };
+    expect(select.horarios.orderBy).toEqual({ diaSemana: 'asc' });
+  });
+
+  it('sin horario configurado devuelve un arreglo vacío y respeta los festivos', async () => {
+    const { servicio, prisma } = crearEntorno();
+    prisma.festivo.findMany.mockResolvedValue([{ fecha: new Date('2026-10-26T00:00:00.000Z') }]);
+    const resultado = await servicio.consultar(consulta());
+
+    expect(resultado.horarios).toEqual([]);
+    expect(resultado.reservableDesde).toBe('2026-10-27T05:00:00.000Z');
+  });
+
+  it('con anticipación en días corridos no consulta festivos', async () => {
+    const { servicio, prisma } = crearEntorno([], {
+      ...ESPACIO,
+      tipo: { anticipacionMinimaDias: 3, anticipacionEnHabiles: false },
+    });
+    const resultado = await servicio.consultar(consulta());
+
+    expect(prisma.festivo.findMany).not.toHaveBeenCalled();
+    expect(resultado.reservableDesde).toBe('2026-10-25T05:00:00.000Z');
+  });
+
   it('devuelve las franjas con estado y etiqueta, sin datos personales', async () => {
     const { servicio } = crearEntorno([
       {
