@@ -111,7 +111,7 @@ describe('SolicitudesService.obtener', () => {
         {
           id: 'r-1',
           espacioId: 'esp-1',
-          espacio: { codigo: 'B-101', nombre: 'Auditorio Mayor' },
+          espacio: { codigo: 'B-101', nombre: 'Auditorio Mayor', tipoEspacioId: 'tipo-1' },
           inicio: new Date('2026-11-03T13:00:00.000Z'),
           fin: new Date('2026-11-03T17:00:00.000Z'),
           unidad: 'HORA',
@@ -166,7 +166,7 @@ describe('SolicitudesService.obtener', () => {
     expect(where).toEqual({ id: SOLICITUD_ID, OR: [{ solicitanteId: 'sol-1' }] });
     expect(r.reservas).toEqual([
       expect.objectContaining({ id: 'r-1', cantidad: 4, subtotal: 80_000, inicio: '2026-11-03T13:00:00.000Z',
-        espacioCodigo: 'B-101', espacioNombre: 'Auditorio Mayor' }),
+        tipoEspacioId: 'tipo-1', espacioCodigo: 'B-101', espacioNombre: 'Auditorio Mayor' }),
     ]);
     expect(r.servicios).toEqual([expect.objectContaining({ nombre: 'Sonido', subtotal: 50_000 })]);
     expect(r.decisiones).toEqual([
@@ -177,7 +177,7 @@ describe('SolicitudesService.obtener', () => {
       observaciones: null, registradaEn: '2026-11-03T13:00:00.000Z' }]);
     expect(e.prisma.solicitud.findFirst).toHaveBeenCalledWith(expect.objectContaining({ include: expect.objectContaining({
       actas: { orderBy: { generadaEn: 'asc' } },
-      reservas: { orderBy: { inicio: 'asc' }, include: { espacio: { select: { codigo: true, nombre: true } } } },
+      reservas: { orderBy: { inicio: 'asc' }, include: { espacio: { select: { codigo: true, nombre: true, tipoEspacioId: true } } } },
     }) }));
   });
 

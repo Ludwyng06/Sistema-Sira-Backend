@@ -11,6 +11,7 @@ import { evaluarAforo } from '../../inventario/dominio/aforo.js';
 import { NotificacionesService } from '../../notificaciones/services/notificaciones.service.js';
 import { TarifarioService } from '../../tarifario/services/tarifario.service.js';
 import { validarTransicion } from '../dominio/maquina-estados.js';
+import { servicioCompatible } from '../dominio/compatibilidad-servicio.js';
 import { horaLocal, validarAnticipacion, validarHorario } from '../dominio/reglas-franja.js';
 import type { AdvertenciaEnvioDto, SolicitudEnviadaDto } from '../dto/solicitud.dto.js';
 import { aDto, SolicitudesService } from './solicitudes.service.js';
@@ -34,6 +35,7 @@ export interface ProblemaEnvio {
   codigo: string;
   mensaje: string;
   reservaId?: string;
+  servicioItemId?: string;
   sugerencias?: EspacioSugerido[];
 }
 
@@ -93,6 +95,7 @@ export class EnvioService {
         espacio: {
           select: {
             id: true,
+            tipoEspacioId: true,
             archivadoEn: true,
             esReservable: true,
             estado: true,
@@ -168,6 +171,26 @@ export class EnvioService {
             sugerencias: await this.sugerir(item, borrador.asistentesEstimados),
           });
         }
+      }
+    }
+
+    const tiposDeLosEspacios = reservas.map((r) => r.espacio.tipoEspacioId);
+    const serviciosSolicitados = await this.prisma.servicioItem.findMany({
+      where: { solicitudId: id },
+      select: { id: true, servicio: { select: { tiposPermitidos: { select: { id: true } } } } },
+    });
+    for (const item of serviciosSolicitados) {
+      if (
+        !servicioCompatible(
+          item.servicio.tiposPermitidos.map((t) => t.id),
+          tiposDeLosEspacios,
+        )
+      ) {
+        problemas.push({
+          codigo: 'SERVICIO_NO_PERMITIDO',
+          mensaje: 'Un servicio de tu solicitud no está disponible para los espacios elegidos. Quítalo para continuar.',
+          servicioItemId: item.id,
+        });
       }
     }
 

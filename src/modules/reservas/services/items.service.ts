@@ -3,6 +3,7 @@ import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import { ErrorDominio, noEncontrado } from '../../../shared/errores/error-dominio.js';
 import { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import { fechaLocal } from '../../../shared/tiempo/zona-horaria.js';
+import { servicioCompatible } from '../dominio/compatibilidad-servicio.js';
 import { validarAnticipacion, validarHorario } from '../dominio/reglas-franja.js';
 import { TarifarioService } from '../../tarifario/services/tarifario.service.js';
 import type {
@@ -56,6 +57,7 @@ export class ItemsService {
       where: { id: datos.espacioId, archivadoEn: null, esReservable: true, estado: { not: 'FUERA_DE_SERVICIO' } },
       select: {
         id: true,
+        tipoEspacioId: true,
         horarios: { select: { diaSemana: true, abre: true, cierra: true } },
         tipo: { select: { anticipacionMinimaDias: true, anticipacionEnHabiles: true } },
       },
@@ -133,6 +135,7 @@ export class ItemsService {
     return {
       id: fila.id,
       espacioId: fila.espacioId,
+      tipoEspacioId: espacio.tipoEspacioId,
       espacioCodigo: fila.espacio.codigo,
       espacioNombre: fila.espacio.nombre,
       inicio: fila.inicio.toISOString(),
@@ -162,9 +165,35 @@ export class ItemsService {
     const solicitud = await this.solicitudes.borradorPropio(solicitudId, usuario);
     const servicio = await this.prisma.servicioComplementario.findFirst({
       where: { id: datos.servicioId, activo: true, proveedor: { activo: true } },
-      select: { id: true, nombre: true, cantidadMaxima: true },
+      select: {
+        id: true,
+        nombre: true,
+        cantidadMaxima: true,
+        tiposPermitidos: { select: { id: true } },
+      },
     });
     if (!servicio) throw noEncontrado('El servicio');
+
+    // RF-SVC-04: el catálogo se filtra por los tipos de los espacios ya agregados al borrador.
+    const reservas = await this.prisma.reservaItem.findMany({
+      where: { solicitudId },
+      select: { espacio: { select: { tipoEspacioId: true } } },
+    });
+    if (reservas.length === 0) {
+      throw new ErrorDominio('SOLICITUD_SIN_RESERVAS', 'Agrega primero un espacio y su horario.', 422);
+    }
+    if (
+      !servicioCompatible(
+        servicio.tiposPermitidos.map((t) => t.id),
+        reservas.map((r) => r.espacio.tipoEspacioId),
+      )
+    ) {
+      throw new ErrorDominio(
+        'SERVICIO_NO_PERMITIDO',
+        'Este servicio no está disponible para los espacios de tu solicitud.',
+        422,
+      );
+    }
     if (servicio.cantidadMaxima !== null && datos.cantidad > servicio.cantidadMaxima) {
       throw new ErrorDominio(
         'CANTIDAD_EXCEDIDA',

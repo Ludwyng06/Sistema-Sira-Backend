@@ -66,7 +66,8 @@ export class ItemsController {
       'El valor unitario es la tarifa vigente para el tipo de tarifa de la solicitud (0 si el servicio no tiene ' +
       'tarifa definida). Un servicio no se repite; máximo 30 por solicitud.\n\n' +
       'Errores: 404 NO_ENCONTRADO; 409 SOLICITUD_NO_EDITABLE o SERVICIO_DUPLICADO; ' +
-      '422 CANTIDAD_EXCEDIDA o LIMITE_DE_ITEMS.',
+      '422 SOLICITUD_SIN_RESERVAS (primero se agrega un espacio), SERVICIO_NO_PERMITIDO (el servicio no aplica a ' +
+      'los tipos de espacio de la solicitud), CANTIDAD_EXCEDIDA o LIMITE_DE_ITEMS.',
   })
   @ApiCreatedResponse({ type: ServicioItemDto })
   @ApiErrores(400, 401, 404, 409, 422)

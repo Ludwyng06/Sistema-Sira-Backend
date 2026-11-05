@@ -49,6 +49,12 @@ export class ReservaItemDto {
   @ApiProperty({ format: 'uuid' })
   espacioId!: string;
 
+  @ApiProperty({
+    format: 'uuid',
+    description: 'Tipo del espacio reservado; sirve para filtrar el catálogo de servicios compatibles.',
+  })
+  tipoEspacioId!: string;
+
   @ApiProperty({ example: '2026-11-03T13:00:00.000Z' })
   inicio!: string;
 

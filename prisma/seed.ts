@@ -698,22 +698,37 @@ async function servicios() {
   const idDe = (prefijo: string) =>
     [...ids.entries()].find(([nombre]) => nombre.startsWith(prefijo))![1];
 
-  const catalogo = [
-    { proveedor: 'Grupo de danzas', nombre: 'Presentación del grupo de danzas', categoria: 'CULTURAL', unidad: 'EVENTO' },
-    { proveedor: 'Coro institucional', nombre: 'Presentación del coro', categoria: 'CULTURAL', unidad: 'EVENTO' },
-    { proveedor: 'Oficina de Sistemas', nombre: 'Sonido', categoria: 'TECNICO', unidad: 'HORA' },
-    { proveedor: 'Oficina de Sistemas', nombre: 'Videobeam', categoria: 'TECNICO', unidad: 'HORA' },
-    { proveedor: 'Catering', nombre: 'Refrigerio', categoria: 'ALIMENTACION', unidad: 'PERSONA' },
-  ] as const;
+  // Restricciones de ejemplo (RF-SVC-04) hasta que la institución defina las reales.
+  // Lista vacía = el servicio aplica a todos los tipos de espacio.
+  const ESCENICOS = ['AUDITORIO', 'ESCENARIO_DEPORTIVO', 'ZONA_VERDE'];
+  const SIN_LABORATORIOS = TIPOS.map((t) => t.codigo).filter(
+    (c) => c !== 'LABORATORIO' && c !== 'SALA_INFORMATICA',
+  );
+  const catalogo: {
+    proveedor: string;
+    nombre: string;
+    categoria: 'CULTURAL' | 'TECNICO' | 'ALIMENTACION';
+    unidad: 'EVENTO' | 'HORA' | 'PERSONA';
+    tipos: string[];
+  }[] = [
+    { proveedor: 'Grupo de danzas', nombre: 'Presentación del grupo de danzas', categoria: 'CULTURAL', unidad: 'EVENTO', tipos: ESCENICOS },
+    { proveedor: 'Coro institucional', nombre: 'Presentación del coro', categoria: 'CULTURAL', unidad: 'EVENTO', tipos: ESCENICOS },
+    { proveedor: 'Oficina de Sistemas', nombre: 'Sonido', categoria: 'TECNICO', unidad: 'HORA', tipos: [] },
+    { proveedor: 'Oficina de Sistemas', nombre: 'Videobeam', categoria: 'TECNICO', unidad: 'HORA', tipos: [] },
+    { proveedor: 'Catering', nombre: 'Refrigerio', categoria: 'ALIMENTACION', unidad: 'PERSONA', tipos: SIN_LABORATORIOS },
+  ];
   for (const s of catalogo) {
     const proveedorId = idDe(s.proveedor);
+    const tipoIds = (
+      await prisma.tipoEspacio.findMany({ where: { codigo: { in: s.tipos } }, select: { id: true } })
+    ).map((t) => ({ id: t.id }));
     const existente = await prisma.servicioComplementario.findFirst({
       where: { proveedorId, nombre: s.nombre },
     });
     if (existente) {
       await prisma.servicioComplementario.update({
         where: { id: existente.id },
-        data: { categoria: s.categoria, unidadCobro: s.unidad },
+        data: { categoria: s.categoria, unidadCobro: s.unidad, tiposPermitidos: { set: tipoIds } },
       });
     } else {
       await prisma.servicioComplementario.create({
@@ -723,6 +738,7 @@ async function servicios() {
           categoria: s.categoria,
           unidadCobro: s.unidad,
           descripcion: EJEMPLO,
+          tiposPermitidos: { connect: tipoIds },
         },
       });
     }

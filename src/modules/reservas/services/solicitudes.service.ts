@@ -41,7 +41,7 @@ export function aDto(fila: FilaSolicitud): SolicitudDto {
 
 type FilaDetalle = Prisma.SolicitudGetPayload<{
   include: {
-    reservas: { include: { espacio: { select: { codigo: true; nombre: true } } } };
+    reservas: { include: { espacio: { select: { codigo: true; nombre: true; tipoEspacioId: true } } } };
     servicios: { include: { servicio: { select: { nombre: true } } } };
     decisiones: true;
     cotizaciones: true;
@@ -56,6 +56,7 @@ function aDetalle(fila: FilaDetalle): SolicitudDetalleDto {
     reservas: fila.reservas.map((r) => ({
       id: r.id,
       espacioId: r.espacioId,
+      tipoEspacioId: r.espacio.tipoEspacioId,
       espacioCodigo: r.espacio.codigo,
       espacioNombre: r.espacio.nombre,
       inicio: r.inicio.toISOString(),
@@ -166,7 +167,7 @@ export class SolicitudesService {
       include: {
         reservas: {
           orderBy: { inicio: 'asc' },
-          include: { espacio: { select: { codigo: true, nombre: true } } },
+          include: { espacio: { select: { codigo: true, nombre: true, tipoEspacioId: true } } },
         },
         servicios: { include: { servicio: { select: { nombre: true } } } },
         decisiones: { orderBy: { decididaEn: 'asc' } },

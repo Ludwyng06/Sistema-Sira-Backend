@@ -9,6 +9,8 @@ import type { SolicitudesService } from './solicitudes.service.js';
 const SOLICITUD_ID = '6e1d8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b';
 const ESPACIO_ID = '8a3b8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b';
 const SERVICIO_ID = '4d1b8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b';
+const TIPO_AULA = '1c1b8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b';
+const TIPO_AUDITORIO = '2c1b8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b';
 const AHORA = new Date('2026-10-21T15:00:00.000Z');
 
 const usuario: UsuarioAutenticado = {
@@ -40,6 +42,7 @@ function crearEntorno() {
     espacio: {
       findFirst: vi.fn().mockResolvedValue({
         id: ESPACIO_ID,
+        tipoEspacioId: TIPO_AULA,
         horarios: [],
         tipo: { anticipacionMinimaDias: 2, anticipacionEnHabiles: true },
       }),
@@ -54,7 +57,9 @@ function crearEntorno() {
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     servicioComplementario: {
-      findFirst: vi.fn().mockResolvedValue({ id: SERVICIO_ID, nombre: 'Sonido', cantidadMaxima: 2 }),
+      findFirst: vi
+        .fn()
+        .mockResolvedValue({ id: SERVICIO_ID, nombre: 'Sonido', cantidadMaxima: 2, tiposPermitidos: [] }),
     },
     servicioItem: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -77,6 +82,10 @@ function crearEntorno() {
   );
   return { servicio, prisma, solicitudes, tarifario };
 }
+
+/** El borrador ya tiene una reserva de un espacio de tipo aula. */
+const conReserva = (e: ReturnType<typeof crearEntorno>, tipo = TIPO_AULA) =>
+  e.prisma.reservaItem.findMany.mockResolvedValue([{ espacio: { tipoEspacioId: tipo } }]);
 
 const rechazo = (promesa: Promise<unknown>): Promise<unknown> => promesa.catch((e: unknown) => e);
 const reserva = (cambios: Record<string, string> = {}) => ({
@@ -106,6 +115,7 @@ describe('ItemsService reservas', () => {
     expect(item).toMatchObject({
       id: 'r-1',
       espacioId: ESPACIO_ID,
+      tipoEspacioId: TIPO_AULA,
       inicio: '2026-11-03T13:00:00.000Z',
       fin: '2026-11-03T17:00:00.000Z',
       unidad: 'HORA',
@@ -262,6 +272,7 @@ describe('ItemsService concurrencia con el envío', () => {
 
   it('un servicio agregado cuando la solicitud ya salió de BORRADOR da 409 y no se crea', async () => {
     const e = crearEntorno();
+    conReserva(e);
     e.prisma.solicitud.updateMany.mockResolvedValue({ count: 0 });
     const error = await rechazo(
       e.servicio.agregarServicio(SOLICITUD_ID, { servicioId: SERVICIO_ID, cantidad: 1 }, usuario),
@@ -294,6 +305,7 @@ describe('ItemsService concurrencia con el envío', () => {
 
   it('un servicio cuyo valor por cantidad desborda un entero de PostgreSQL da 422 VALOR_EXCEDIDO', async () => {
     const e = crearEntorno();
+    conReserva(e);
     e.prisma.tarifa.findFirst.mockResolvedValue({ valor: 2_000_000_000 });
     const error = await rechazo(
       e.servicio.agregarServicio(SOLICITUD_ID, { servicioId: SERVICIO_ID, cantidad: 2 }, usuario),
@@ -304,8 +316,60 @@ describe('ItemsService concurrencia con el envío', () => {
 });
 
 describe('ItemsService servicios', () => {
+  it('sin reservas en el borrador da 422 SOLICITUD_SIN_RESERVAS', async () => {
+    const e = crearEntorno();
+    const error = await rechazo(
+      e.servicio.agregarServicio(SOLICITUD_ID, { servicioId: SERVICIO_ID, cantidad: 1 }, usuario),
+    );
+    expect(error).toMatchObject({
+      codigo: 'SOLICITUD_SIN_RESERVAS',
+      status: 422,
+      message: 'Agrega primero un espacio y su horario.',
+    });
+    expect(e.prisma.servicioItem.create).not.toHaveBeenCalled();
+  });
+
+  it('un servicio restringido a otros tipos de espacio da 422 SERVICIO_NO_PERMITIDO', async () => {
+    const e = crearEntorno();
+    conReserva(e);
+    e.prisma.servicioComplementario.findFirst.mockResolvedValue({
+      id: SERVICIO_ID,
+      nombre: 'Coro',
+      cantidadMaxima: null,
+      tiposPermitidos: [{ id: TIPO_AUDITORIO }],
+    });
+    const error = await rechazo(
+      e.servicio.agregarServicio(SOLICITUD_ID, { servicioId: SERVICIO_ID, cantidad: 1 }, usuario),
+    );
+    expect(error).toMatchObject({
+      codigo: 'SERVICIO_NO_PERMITIDO',
+      status: 422,
+      message: 'Este servicio no está disponible para los espacios de tu solicitud.',
+    });
+    expect(e.prisma.servicioItem.create).not.toHaveBeenCalled();
+  });
+
+  it('un servicio restringido se admite si algún espacio de la solicitud es de un tipo permitido', async () => {
+    const e = crearEntorno();
+    e.prisma.reservaItem.findMany.mockResolvedValue([
+      { espacio: { tipoEspacioId: TIPO_AULA } },
+      { espacio: { tipoEspacioId: TIPO_AUDITORIO } },
+    ]);
+    e.prisma.servicioComplementario.findFirst.mockResolvedValue({
+      id: SERVICIO_ID,
+      nombre: 'Coro',
+      cantidadMaxima: null,
+      tiposPermitidos: [{ id: TIPO_AUDITORIO }],
+    });
+    await expect(
+      e.servicio.agregarServicio(SOLICITUD_ID, { servicioId: SERVICIO_ID, cantidad: 1 }, usuario),
+    ).resolves.toMatchObject({ id: 's-1' });
+  });
+
+
   it('agrega el servicio con la tarifa vigente del tipo de tarifa', async () => {
     const e = crearEntorno();
+    conReserva(e);
     const item = await e.servicio.agregarServicio(SOLICITUD_ID, { servicioId: SERVICIO_ID, cantidad: 2 }, usuario);
 
     expect(item).toMatchObject({
@@ -322,6 +386,7 @@ describe('ItemsService servicios', () => {
 
   it('sin tarifa definida el valor estimado es 0', async () => {
     const e = crearEntorno();
+    conReserva(e);
     e.prisma.tarifa.findFirst.mockResolvedValue(null);
     const item = await e.servicio.agregarServicio(SOLICITUD_ID, { servicioId: SERVICIO_ID, cantidad: 1 }, usuario);
     expect(item).toMatchObject({ valorUnitario: 0, subtotal: 0 });
@@ -329,6 +394,7 @@ describe('ItemsService servicios', () => {
 
   it('una cantidad sobre el máximo da 422 CANTIDAD_EXCEDIDA', async () => {
     const e = crearEntorno();
+    conReserva(e);
     const error = await rechazo(
       e.servicio.agregarServicio(SOLICITUD_ID, { servicioId: SERVICIO_ID, cantidad: 3 }, usuario),
     );
@@ -337,6 +403,7 @@ describe('ItemsService servicios', () => {
 
   it('un servicio repetido da 409 SERVICIO_DUPLICADO', async () => {
     const e = crearEntorno();
+    conReserva(e);
     e.prisma.servicioItem.findMany.mockResolvedValue([{ servicioId: SERVICIO_ID }]);
     const error = await rechazo(
       e.servicio.agregarServicio(SOLICITUD_ID, { servicioId: SERVICIO_ID, cantidad: 1 }, usuario),
@@ -346,6 +413,7 @@ describe('ItemsService servicios', () => {
 
   it('un servicio inexistente o inactivo da 404', async () => {
     const e = crearEntorno();
+    conReserva(e);
     e.prisma.servicioComplementario.findFirst.mockResolvedValue(null);
     const error = await rechazo(
       e.servicio.agregarServicio(SOLICITUD_ID, { servicioId: SERVICIO_ID, cantidad: 1 }, usuario),

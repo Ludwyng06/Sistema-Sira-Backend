@@ -52,6 +52,7 @@ const reserva = (cambios: Record<string, unknown> = {}, espacio: Record<string, 
   fin: new Date('2026-11-03T17:00:00.000Z'),
   espacio: {
     id: ESPACIO_ID,
+    tipoEspacioId: 'tipo-aula',
     archivadoEn: null,
     esReservable: true,
     estado: 'DISPONIBLE',
@@ -74,7 +75,7 @@ const estimado = {
   total: 0,
 };
 
-function crearEntorno(opciones: { reservas?: unknown[]; solicitud?: unknown; cuenta?: unknown } = {}) {
+function crearEntorno(opciones: { reservas?: unknown[]; solicitud?: unknown; cuenta?: unknown; servicios?: unknown[] } = {}) {
   const tx = {
     franjaOcupada: { create: vi.fn().mockResolvedValue({}) },
     reservaItem: {
@@ -96,6 +97,7 @@ function crearEntorno(opciones: { reservas?: unknown[]; solicitud?: unknown; cue
     },
     reservaItem: { findMany: vi.fn().mockResolvedValue(opciones.reservas ?? [reserva()]) },
     festivo: { findMany: vi.fn().mockResolvedValue([]) },
+    servicioItem: { findMany: vi.fn().mockResolvedValue(opciones.servicios ?? []) },
     documentoAdjunto: { count: vi.fn().mockResolvedValue(0) },
     franjaOcupada: { findMany: vi.fn().mockResolvedValue([]) },
     solicitante: { findUnique: vi.fn().mockResolvedValue({ tipo: 'INTERNO' }) },
@@ -293,6 +295,21 @@ describe('EnvioService.enviar', () => {
     });
     const error = await rechazo(e.servicio.enviar(SOLICITUD_ID, usuario, CONTEXTO));
     expect(problemasDe(error)).toEqual(['FUERA_DE_HORARIO']);
+  });
+
+  it('un servicio incompatible con los espacios agrega SERVICIO_NO_PERMITIDO con su servicioItemId', async () => {
+    const e = crearEntorno({
+      servicios: [
+        { id: 'si-1', servicio: { tiposPermitidos: [{ id: 'tipo-auditorio' }] } },
+        { id: 'si-2', servicio: { tiposPermitidos: [] } },
+        { id: 'si-3', servicio: { tiposPermitidos: [{ id: 'tipo-aula' }] } },
+      ],
+    });
+    const error = await rechazo(e.servicio.enviar(SOLICITUD_ID, usuario, CONTEXTO));
+    const problemas = (error as { detalles: { problemas: Record<string, unknown>[] } }).detalles.problemas;
+    expect(problemas.filter((p) => p.codigo === 'SERVICIO_NO_PERMITIDO')).toEqual([
+      expect.objectContaining({ codigo: 'SERVICIO_NO_PERMITIDO', servicioItemId: 'si-1' }),
+    ]);
   });
 
   it('un espacio sin horario configurado no se restringe', async () => {
