@@ -70,6 +70,8 @@ function crearEntorno(opciones: { solicitante?: unknown } = {}) {
       count: vi.fn().mockResolvedValue(1),
       update: vi.fn().mockResolvedValue(fila({ objetoEvento: 'Nuevo' })),
     },
+    reembolso: { findFirst: vi.fn().mockResolvedValue(null) },
+    bitacora: { findFirst: vi.fn().mockResolvedValue(null) },
     $transaction: vi.fn((fn: (cliente: typeof tx) => Promise<unknown>) => fn(tx)),
   };
   const tarifario = {
@@ -266,6 +268,31 @@ describe('SolicitudesService.obtener', () => {
     expect(r.estimado).toEqual({
       base: 130_000, recargos: 0, subtotal: 130_000, iva: 0, deposito: 0, total: 130_000,
     });
+  });
+
+  it('expone el reembolso con el porcentaje registrado al cancelar; sin reembolso es null', async () => {
+    const e = crearEntorno();
+    e.prisma.solicitud.findFirst.mockResolvedValue(detalle({ estado: 'CANCELADA' }));
+    expect((await e.servicio.obtener(SOLICITUD_ID, usuario())).reembolso).toBeNull();
+
+    e.prisma.reembolso.findFirst.mockResolvedValue({
+      valor: 333_000,
+      estado: 'SOLICITADO',
+      motivo: 'Cancelación por el solicitante: 50 % según política (7 días de antelación)',
+      creadoEn: new Date('2026-11-05T15:00:00.000Z'),
+    });
+    e.prisma.bitacora.findFirst.mockResolvedValue({ datosDespues: { porcentajeReembolso: 50, valorReembolso: 333_000 } });
+    const r = await e.servicio.obtener(SOLICITUD_ID, usuario());
+    expect(r.reembolso).toEqual({
+      valor: 333_000,
+      porcentaje: 50,
+      estado: 'SOLICITADO',
+      motivo: 'Cancelación por el solicitante: 50 % según política (7 días de antelación)',
+      creadoEn: '2026-11-05T15:00:00.000Z',
+    });
+
+    e.prisma.bitacora.findFirst.mockResolvedValue(null);
+    expect((await e.servicio.obtener(SOLICITUD_ID, usuario())).reembolso).toMatchObject({ porcentaje: null });
   });
 
   it('sin cotización devuelve null', async () => {

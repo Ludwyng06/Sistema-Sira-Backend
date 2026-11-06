@@ -29,7 +29,7 @@ const solicitud = (cambios: Record<string, unknown> = {}) => ({
   solicitanteId: 'sol-1',
   estado: 'CONFIRMADA',
   reservas: [{ id: 'r-1', inicio: new Date('2026-11-03T13:00:00.000Z') }],
-  cotizaciones: [{ total: 200_000, esExenta: false }],
+  cotizaciones: [{ total: 200_000, esExenta: false, ordenesPago: [{ id: 'op-1' }] }],
   ...cambios,
 });
 
@@ -42,6 +42,7 @@ function crearEntorno(fila: unknown = solicitud(), perfil: unknown = { id: 'sol-
     franjaOcupada: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     historialEstadoSolicitud: { create: vi.fn().mockResolvedValue({}) },
     bitacora: { create: vi.fn().mockResolvedValue({}) },
+    reembolso: { create: vi.fn().mockResolvedValue({}) },
   };
   const prisma = {
     solicitante: { findUnique: vi.fn().mockResolvedValue(perfil) },
@@ -135,6 +136,42 @@ describe('CancelacionService.cancelar', () => {
     });
   });
 
+  it('crea el reembolso SOLICITADO ligado a la orden aprobada, con motivo legible', async () => {
+    const e = crearEntorno(solicitud({ reservas: [{ id: 'r-1', inicio: new Date('2026-11-02T13:00:00.000Z') }] }));
+    await e.servicio.cancelar(SOLICITUD_ID, { motivo: 'x' }, usuario(), CONTEXTO);
+    // 26 de octubre → 2 de noviembre = 7 días: tramo del 50 %.
+    expect(e.tx.reembolso.create).toHaveBeenCalledWith({
+      data: {
+        ordenPagoId: 'op-1',
+        valor: 100_000,
+        motivo: 'Cancelación por el solicitante: 50 % según política (7 días de antelación)',
+        estado: 'SOLICITADO',
+      },
+    });
+  });
+
+  it('una cancelación institucional crea el reembolso al 100 %', async () => {
+    const e = crearEntorno(solicitud(), { id: 'otro-perfil' });
+    await e.servicio.cancelar(SOLICITUD_ID, { motivo: 'Cierre' }, usuario({ roles: ['ADMINISTRADOR'] }), CONTEXTO);
+    expect(e.tx.reembolso.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ valor: 200_000, motivo: 'Cancelación por la institución: 100 %' }),
+    });
+  });
+
+  it('sin reembolso (0 %) o sin orden aprobada no crea fila', async () => {
+    const sinReembolso = crearEntorno(
+      solicitud({ reservas: [{ id: 'r-1', inicio: new Date('2026-10-26T22:00:00.000Z') }] }),
+    );
+    await sinReembolso.servicio.cancelar(SOLICITUD_ID, { motivo: 'x' }, usuario(), CONTEXTO);
+    expect(sinReembolso.tx.reembolso.create).not.toHaveBeenCalled();
+
+    const sinOrden = crearEntorno(
+      solicitud({ cotizaciones: [{ total: 200_000, esExenta: false, ordenesPago: [] }] }),
+    );
+    await sinOrden.servicio.cancelar(SOLICITUD_ID, { motivo: 'x' }, usuario(), CONTEXTO);
+    expect(sinOrden.tx.reembolso.create).not.toHaveBeenCalled();
+  });
+
   it('avisa al solicitante de la cancelación y el reembolso', async () => {
     const e = crearEntorno(solicitud({ consecutivo: 'SOL-2026-0007' }));
     await e.servicio.cancelar(SOLICITUD_ID, { motivo: 'x' }, usuario(), CONTEXTO);
@@ -142,7 +179,7 @@ describe('CancelacionService.cancelar', () => {
       SOLICITUD_ID,
       expect.objectContaining({
         titulo: 'Solicitud SOL-2026-0007 cancelada',
-        cuerpo: expect.stringContaining('100 %'),
+        cuerpo: expect.stringContaining('100 % ($200.000)'),
       }),
     );
   });
@@ -160,7 +197,7 @@ describe('CancelacionService.cancelar', () => {
   });
 
   it('una solicitud exenta no genera reembolso', async () => {
-    const e = crearEntorno(solicitud({ cotizaciones: [{ total: 0, esExenta: true }] }));
+    const e = crearEntorno(solicitud({ cotizaciones: [{ total: 0, esExenta: true, ordenesPago: [] }] }));
     const r = await e.servicio.cancelar(SOLICITUD_ID, { motivo: 'x' }, usuario(), CONTEXTO);
     expect(r).toMatchObject({ porcentajeReembolso: 0, valorReembolso: 0 });
   });

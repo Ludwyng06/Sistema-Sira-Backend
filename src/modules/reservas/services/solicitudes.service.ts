@@ -17,6 +17,7 @@ import type {
   FiltrosSolicitudesDto,
   PaginaSolicitudesDto,
   EstimadoSolicitudDto,
+  ReembolsoSolicitudDto,
   SolicitudDetalleDto,
   SolicitudDto,
 } from '../dto/solicitud.dto.js';
@@ -79,6 +80,7 @@ function aDetalle(
   fila: FilaDetalle,
   estimado: EstimadoSolicitudDto,
   vigentes: LineasVigentes | null,
+  reembolso: ReembolsoSolicitudDto | null,
 ): SolicitudDetalleDto {
   const cotizacion = fila.cotizaciones[0];
   return {
@@ -134,6 +136,7 @@ function aDetalle(
         }
       : null,
     estimado,
+    reembolso,
   };
 }
 
@@ -223,7 +226,29 @@ export class SolicitudesService {
     });
     if (!fila) throw noEncontrado('La solicitud');
     const { estimado, vigentes } = await this.estimar(fila);
-    return aDetalle(fila, estimado, vigentes);
+    return aDetalle(fila, estimado, vigentes, await this.reembolsoDe(id));
+  }
+
+  /** Reembolso de la solicitud (si lo hay) y el porcentaje que quedó registrado al cancelar. */
+  private async reembolsoDe(solicitudId: string): Promise<ReembolsoSolicitudDto | null> {
+    const fila = await this.prisma.reembolso.findFirst({
+      where: { ordenPago: { cotizacion: { solicitudId } } },
+      orderBy: { creadoEn: 'desc' },
+    });
+    if (!fila) return null;
+    const cancelacion = await this.prisma.bitacora.findFirst({
+      where: { accion: 'SOLICITUD_CANCELADA', entidad: 'Solicitud', entidadId: solicitudId },
+      orderBy: { ocurrioEn: 'desc' },
+      select: { datosDespues: true },
+    });
+    const datos = cancelacion?.datosDespues as { porcentajeReembolso?: unknown } | null | undefined;
+    return {
+      valor: fila.valor,
+      porcentaje: typeof datos?.porcentajeReembolso === 'number' ? datos.porcentajeReembolso : null,
+      estado: fila.estado,
+      motivo: fila.motivo,
+      creadoEn: fila.creadoEn.toISOString(),
+    };
   }
 
   /** 404 si la solicitud no existe o está fuera del alcance del usuario (dueño o bandeja por rol). */

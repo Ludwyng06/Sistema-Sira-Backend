@@ -1,3 +1,4 @@
+import { formatearPesos } from '../../../shared/formato/pesos.js';
 import { Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { Prisma } from '../../../generated/prisma/client.js';
@@ -523,7 +524,7 @@ export class PagosService {
         [...new Set(tesoreria.map((t) => t.usuarioId))].map((id) =>
           this.notificaciones.notificarUsuario(id, {
             titulo: `Reembolso pendiente: orden ${orden.referencia}`,
-            cuerpo: `Pago tardío sin franja libre. Reembolsa ${orden.valor} pesos al solicitante.`,
+            cuerpo: `Pago tardío sin franja libre. Reembolsa ${formatearPesos(orden.valor)} al solicitante.`,
           }),
         ),
       );

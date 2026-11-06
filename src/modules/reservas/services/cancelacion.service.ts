@@ -4,8 +4,10 @@ import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import { ErrorDominio, noEncontrado } from '../../../shared/errores/error-dominio.js';
 import { ParametroService } from '../../../shared/parametros/parametro.service.js';
 import { PrismaService } from '../../../shared/prisma/prisma.service.js';
+import { formatearPesos } from '../../../shared/formato/pesos.js';
 import { fechaLocal } from '../../../shared/tiempo/zona-horaria.js';
 import { NotificacionesService } from '../../notificaciones/services/notificaciones.service.js';
+import { motivoReembolso } from '../dominio/reembolso.js';
 import { TransicionInvalida, validarTransicion } from '../dominio/maquina-estados.js';
 import type { CancelarSolicitudDto, CancelacionDto } from '../dto/cancelacion.dto.js';
 
@@ -75,7 +77,11 @@ export class CancelacionService {
       },
       include: {
         reservas: { select: { id: true, inicio: true }, orderBy: { inicio: 'asc' } },
-        cotizaciones: { orderBy: { creadaEn: 'desc' }, take: 1 },
+        cotizaciones: {
+          orderBy: { creadaEn: 'desc' },
+          take: 1,
+          include: { ordenesPago: { where: { estado: 'APROBADA' }, select: { id: true }, take: 1 } },
+        },
       },
     });
     if (!solicitud || (!perfil && !esAdministrador)) throw noEncontrado('La solicitud');
@@ -125,6 +131,17 @@ export class CancelacionService {
         where: { reservaItemId: { in: solicitud.reservas.map((r) => r.id) }, estado: { not: 'LIBERADA' } },
         data: { estado: 'LIBERADA', retenidaHasta: null },
       });
+      const ordenPagada = cotizacion?.ordenesPago[0];
+      if (ordenPagada && valorReembolso > 0) {
+        await tx.reembolso.create({
+          data: {
+            ordenPagoId: ordenPagada.id,
+            valor: valorReembolso,
+            motivo: motivoReembolso(institucional, porcentaje, diasDeAntelacion),
+            estado: 'SOLICITADO',
+          },
+        });
+      }
       await tx.historialEstadoSolicitud.create({
         data: {
           solicitudId: id,
@@ -163,7 +180,7 @@ export class CancelacionService {
       titulo: `Solicitud ${solicitud.consecutivo ?? 'sin consecutivo'} cancelada`,
       cuerpo: institucional
         ? `La institución canceló tu reserva. Motivo: ${motivo}. El reembolso es del ${porcentaje} %.`
-        : `Cancelaste tu reserva. Reembolso del ${porcentaje} % (${valorReembolso} pesos).`,
+        : `Cancelaste tu reserva. Reembolso del ${porcentaje} % (${formatearPesos(valorReembolso)}).`,
     });
     return cancelada;
   }

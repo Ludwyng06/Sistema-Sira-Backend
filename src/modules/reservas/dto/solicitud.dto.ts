@@ -317,6 +317,32 @@ export class EstimadoSolicitudDto {
   total!: number;
 }
 
+export class ReembolsoSolicitudDto {
+  @ApiProperty({ example: 333000, description: 'Valor a reembolsar en pesos enteros.' })
+  valor!: number;
+
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    example: 50,
+    description: 'Porcentaje de reembolso aplicado al cancelar. Nulo si no quedó registrado.',
+  })
+  porcentaje!: number | null;
+
+  @ApiProperty({
+    enum: ['SOLICITADO', 'APLICADO', 'RECHAZADO'],
+    example: 'SOLICITADO',
+    description: 'SOLICITADO: pendiente de que Tesorería lo devuelva. APLICADO: ya devuelto. RECHAZADO: no procede.',
+  })
+  estado!: 'SOLICITADO' | 'APLICADO' | 'RECHAZADO';
+
+  @ApiProperty({ example: 'Cancelación por el solicitante: 50 % según política (7 días de antelación)' })
+  motivo!: string;
+
+  @ApiProperty({ example: '2026-11-05T15:00:00.000Z', description: 'Fecha de creación (UTC).' })
+  creadoEn!: string;
+}
+
 export class SolicitudDetalleDto extends SolicitudDto {
   @ApiProperty({ type: [ActaResumenSolicitudDto] })
   actas!: ActaResumenSolicitudDto[];
@@ -341,6 +367,13 @@ export class SolicitudDetalleDto extends SolicitudDto {
       'institucionales exentas es solo un valor de referencia. Sigue presente cuando ya existe la cotización.',
   })
   estimado!: EstimadoSolicitudDto;
+
+  @ApiProperty({
+    type: ReembolsoSolicitudDto,
+    nullable: true,
+    description: 'Reembolso generado al cancelar una solicitud pagada. Nulo si no hay.',
+  })
+  reembolso!: ReembolsoSolicitudDto | null;
 }
 
 export class PaginaSolicitudesDto {
