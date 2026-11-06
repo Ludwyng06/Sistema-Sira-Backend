@@ -8,6 +8,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   Max,
   MaxLength,
@@ -23,6 +24,11 @@ const booleano = (a: ValidationArguments) => `${a.property} debe ser verdadero o
 const largo = (max: number) => (a: ValidationArguments) => `${a.property} no puede superar ${max} caracteres.`;
 
 export class CrearEspacioDto {
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID('all', { message: 'responsableId debe ser un identificador válido.' })
+  responsableId?: string;
+
   @ApiProperty({ description: 'Código de la sede.', example: 'MOC' })
   @IsString({ message: texto })
   @IsNotEmpty({ message: noVacio })
@@ -124,4 +130,11 @@ export class CrearEspacioDto {
   @Min(0, { message: minimo(0) })
   @Max(100, { message: (a: ValidationArguments) => `${a.property} no puede ser mayor que 100.` })
   depositoPorcentaje?: number;
+
+  @ApiPropertyOptional({ description: 'Valor comercial de referencia en pesos enteros (RF-INV-02).' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: entero })
+  @Min(0, { message: minimo(0) })
+  valorComercialReferencia?: number;
 }

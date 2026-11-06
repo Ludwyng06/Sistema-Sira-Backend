@@ -1,12 +1,125 @@
 import { Injectable } from '@nestjs/common';
-import { ErrorDominio, noEncontrado } from '../../../shared/errores/error-dominio.js';
+import type { Prisma } from '../../../generated/prisma/client.js';
+import {
+  ErrorDominio,
+  noEncontrado,
+} from '../../../shared/errores/error-dominio.js';
 import { PrismaService } from '../../../shared/prisma/prisma.service.js';
+import { NotificacionesService } from '../../notificaciones/services/notificaciones.service.js';
+import type { ActualizarEspacioDto } from '../dto/actualizar-espacio.dto.js';
 import type { CrearEspacioDto } from '../dto/crear-espacio.dto.js';
-import type { EspacioCreadoDto } from '../dto/respuestas.js';
+import type { EspacioAdminDto, FiltrosEspaciosAdminDto, PaginaEspaciosAdminDto } from '../dto/espacio-admin.dto.js';
+import type { ReemplazarHorariosDto } from '../dto/horarios-espacio.dto.js';
+import type { EspacioCreadoDto, HorarioDto } from '../dto/respuestas.js';
+
+const incluirAdministracion = {
+  tipo: true,
+  bloque: { include: { sede: true } },
+  dependencia: { select: { codigo: true } },
+  horarios: { orderBy: { diaSemana: 'asc' } },
+  elementos: {
+    where: { estado: { not: 'DADO_DE_BAJA' } },
+    select: { cantidad: true, valorUnitario: true },
+  },
+} satisfies Prisma.EspacioInclude;
+
+type FilaAdministracion = Prisma.EspacioGetPayload<{ include: typeof incluirAdministracion }>;
+
+function aAdministracion(espacio: FilaAdministracion): EspacioAdminDto {
+  const elementos = Array.isArray(espacio.elementos) ? espacio.elementos : [];
+  const valorTotalElementos = elementos.reduce(
+    (suma, el) => suma + el.cantidad * (el.valorUnitario ?? 0),
+    0,
+  );
+  return {
+    id: espacio.id,
+    codigo: espacio.codigo,
+    nombre: espacio.nombre,
+    piso: espacio.piso,
+    capacidadPersonas: espacio.capacidadPersonas,
+    areaM2: espacio.areaM2 === null ? null : Number(espacio.areaM2),
+    descripcion: espacio.descripcion,
+    condicionesUso: espacio.condicionesUso,
+    estado: espacio.estado,
+    requiereAval: espacio.requiereAval,
+    esReservable: espacio.esReservable,
+    minutosMontaje: espacio.minutosMontaje,
+    minutosDesmontaje: espacio.minutosDesmontaje,
+    depositoValorFijo: espacio.depositoValorFijo,
+    depositoPorcentaje: espacio.depositoPorcentaje === null ? null : Number(espacio.depositoPorcentaje),
+    valorComercialReferencia: espacio.valorComercialReferencia ?? null,
+    valorTotalElementos,
+    responsableId: espacio.responsableId,
+    dependenciaId: espacio.dependenciaId,
+    dependenciaCodigo: espacio.dependencia?.codigo ?? null,
+    activo: espacio.archivadoEn === null,
+    tipo: { codigo: espacio.tipo.codigo, nombre: espacio.tipo.nombre },
+    bloque: { codigo: espacio.bloque.codigo, nombre: espacio.bloque.nombre },
+    sede: { codigo: espacio.bloque.sede.codigo, nombre: espacio.bloque.sede.nombre },
+    horarios: espacio.horarios.map((horario) => ({
+      diaSemana: horario.diaSemana, abre: horario.abre, cierra: horario.cierra,
+    })),
+  };
+}
+
+/** Un espacio que exige aval necesita un responsable que pueda darlo. */
+function exigirResponsableParaAval(requiereAval: boolean, responsableId: string | null): void {
+  if (requiereAval && !responsableId) {
+    throw new ErrorDominio(
+      'AVAL_SIN_RESPONSABLE',
+      'Asigna un responsable al espacio antes de exigir su aval.',
+      422,
+    );
+  }
+}
 
 @Injectable()
 export class EspaciosAdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificaciones: NotificacionesService,
+  ) {}
+
+  async listar(filtros: FiltrosEspaciosAdminDto): Promise<PaginaEspaciosAdminDto> {
+    const where: Prisma.EspacioWhereInput = {
+      ...(filtros.activo === undefined ? {} : {
+        archivadoEn: filtros.activo ? null : { not: null },
+      }),
+      ...(filtros.estado ? { estado: filtros.estado } : {}),
+      ...(filtros.bloqueId ? { bloqueId: filtros.bloqueId } : {}),
+      bloque: {
+        ...(filtros.bloque ? { codigo: filtros.bloque.toUpperCase() } : {}),
+        ...(filtros.sedeId ? { sedeId: filtros.sedeId } : {}),
+        ...(filtros.sede ? { sede: { codigo: filtros.sede.toUpperCase() } } : {}),
+      },
+    };
+    const [total, espacios] = await Promise.all([
+      this.prisma.espacio.count({ where }),
+      this.prisma.espacio.findMany({
+        where, include: incluirAdministracion, orderBy: { codigo: 'asc' },
+        skip: (filtros.pagina - 1) * filtros.porPagina, take: filtros.porPagina,
+      }),
+    ]);
+    return { datos: espacios.map(aAdministracion), total, pagina: filtros.pagina, porPagina: filtros.porPagina };
+  }
+
+  async obtener(codigo: string): Promise<EspacioAdminDto> {
+    const espacio = await this.prisma.espacio.findUnique({
+      where: { codigo: codigo.toUpperCase() }, include: incluirAdministracion,
+    });
+    if (!espacio) throw noEncontrado('El espacio');
+    return aAdministracion(espacio);
+  }
+
+  private async validarResponsable(responsableId: string | null | undefined): Promise<void> {
+    if (!responsableId) return;
+    const responsable = await this.prisma.usuario.findFirst({
+      where: { id: responsableId, activo: true }, select: { id: true },
+    });
+    if (!responsable) {
+      throw new ErrorDominio('RESPONSABLE_NO_VALIDO', 'El responsable indicado no existe o está inactivo.', 422);
+    }
+  }
 
   async crear(datos: CrearEspacioDto): Promise<EspacioCreadoDto> {
     const bloque = await this.prisma.bloque.findFirst({
@@ -70,11 +183,16 @@ export class EspaciosAdminService {
       );
     }
 
+    await this.validarResponsable(datos.responsableId);
+    // Sin indicarlo, el aval se exige solo si hay alguien que pueda darlo.
+    const requiereAval = datos.requiereAval ?? Boolean(datos.responsableId);
+    exigirResponsableParaAval(requiereAval, datos.responsableId ?? null);
     const espacio = await this.prisma.espacio.create({
       data: {
         bloqueId: bloque.id,
         tipoEspacioId: tipo.id,
         dependenciaId,
+        responsableId: datos.responsableId,
         codigo: datos.codigo,
         nombre: datos.nombre,
         piso: datos.piso,
@@ -82,12 +200,15 @@ export class EspaciosAdminService {
         areaM2: datos.areaM2,
         descripcion: datos.descripcion,
         condicionesUso: datos.condicionesUso,
-        requiereAval: datos.requiereAval,
+        requiereAval,
         esReservable: datos.esReservable,
         minutosMontaje: datos.minutosMontaje,
         minutosDesmontaje: datos.minutosDesmontaje,
         depositoValorFijo: datos.depositoValorFijo,
         depositoPorcentaje: datos.depositoPorcentaje,
+        ...(datos.valorComercialReferencia !== undefined
+          ? { valorComercialReferencia: datos.valorComercialReferencia }
+          : {}),
       },
     });
 
@@ -100,6 +221,217 @@ export class EspaciosAdminService {
       bloque: { codigo: bloque.codigo, nombre: bloque.nombre },
       sede: { codigo: bloque.sede.codigo, nombre: bloque.sede.nombre },
     };
+  }
+
+  /** Modifica los datos del espacio. El código y el bloque no cambian. */
+  async actualizar(
+    codigo: string,
+    datos: ActualizarEspacioDto,
+  ): Promise<EspacioCreadoDto> {
+    const actual = await this.prisma.espacio.findFirst({
+      where: { codigo: codigo.toUpperCase(), archivadoEn: null },
+      include: { bloque: { include: { sede: true } }, tipo: true },
+    });
+    if (!actual) throw noEncontrado('El espacio');
+
+    let tipo = actual.tipo;
+    if (datos.tipo !== undefined) {
+      const nuevo = await this.prisma.tipoEspacio.findUnique({
+        where: { codigo: datos.tipo.toUpperCase() },
+      });
+      if (!nuevo) {
+        throw new ErrorDominio(
+          'TIPO_ESPACIO_NO_ENCONTRADO',
+          `No existe el tipo de espacio ${datos.tipo.toUpperCase()}.`,
+          404,
+        );
+      }
+      tipo = nuevo;
+    }
+
+    const piso = datos.piso ?? actual.piso;
+    if (piso > actual.bloque.numeroPisos) {
+      throw new ErrorDominio(
+        'PISO_INVALIDO',
+        `El bloque ${actual.bloque.codigo} tiene ${actual.bloque.numeroPisos} piso(s); el piso ${piso} no existe.`,
+        422,
+      );
+    }
+
+    let dependenciaId: string | null | undefined;
+    if (datos.dependencia !== undefined) {
+      if (datos.dependencia === null) {
+        dependenciaId = null;
+      } else {
+        const dependencia = await this.prisma.dependencia.findUnique({
+          where: { codigo: datos.dependencia.toUpperCase() },
+        });
+        if (!dependencia) {
+          throw new ErrorDominio(
+            'DEPENDENCIA_NO_ENCONTRADA',
+            `No existe la dependencia ${datos.dependencia.toUpperCase()}.`,
+            404,
+          );
+        }
+        dependenciaId = dependencia.id;
+      }
+    }
+
+    await this.validarResponsable(datos.responsableId);
+    if (datos.requiereAval !== undefined || datos.responsableId !== undefined) {
+      exigirResponsableParaAval(
+        datos.requiereAval ?? actual.requiereAval,
+        datos.responsableId !== undefined ? datos.responsableId : actual.responsableId,
+      );
+    }
+
+    const espacio = await this.prisma.espacio.update({
+      where: { id: actual.id },
+      data: {
+        ...(datos.tipo !== undefined ? { tipoEspacioId: tipo.id } : {}),
+        ...(dependenciaId !== undefined ? { dependenciaId } : {}),
+        ...(datos.responsableId !== undefined
+          ? { responsableId: datos.responsableId }
+          : {}),
+        ...(datos.nombre !== undefined ? { nombre: datos.nombre.trim() } : {}),
+        ...(datos.piso !== undefined ? { piso: datos.piso } : {}),
+        ...(datos.capacidadPersonas !== undefined
+          ? { capacidadPersonas: datos.capacidadPersonas }
+          : {}),
+        ...(datos.areaM2 !== undefined ? { areaM2: datos.areaM2 } : {}),
+        ...(datos.descripcion !== undefined
+          ? { descripcion: datos.descripcion }
+          : {}),
+        ...(datos.condicionesUso !== undefined
+          ? { condicionesUso: datos.condicionesUso }
+          : {}),
+        ...(datos.estado !== undefined ? { estado: datos.estado } : {}),
+        ...(datos.requiereAval !== undefined
+          ? { requiereAval: datos.requiereAval }
+          : {}),
+        ...(datos.esReservable !== undefined
+          ? { esReservable: datos.esReservable }
+          : {}),
+        ...(datos.minutosMontaje !== undefined
+          ? { minutosMontaje: datos.minutosMontaje }
+          : {}),
+        ...(datos.minutosDesmontaje !== undefined
+          ? { minutosDesmontaje: datos.minutosDesmontaje }
+          : {}),
+        ...(datos.depositoValorFijo !== undefined
+          ? { depositoValorFijo: datos.depositoValorFijo }
+          : {}),
+        ...(datos.depositoPorcentaje !== undefined
+          ? { depositoPorcentaje: datos.depositoPorcentaje }
+          : {}),
+        ...(datos.valorComercialReferencia !== undefined
+          ? { valorComercialReferencia: datos.valorComercialReferencia }
+          : {}),
+      },
+    });
+
+    if (
+      datos.estado === 'FUERA_DE_SERVICIO' &&
+      actual.estado !== 'FUERA_DE_SERVICIO'
+    ) {
+      await this.avisarReprogramacion(actual.id, espacio.codigo);
+    }
+
+    return {
+      codigo: espacio.codigo,
+      nombre: espacio.nombre,
+      piso: espacio.piso,
+      capacidadPersonas: espacio.capacidadPersonas,
+      tipo: { codigo: tipo.codigo, nombre: tipo.nombre },
+      bloque: { codigo: actual.bloque.codigo, nombre: actual.bloque.nombre },
+      sede: {
+        codigo: actual.bloque.sede.codigo,
+        nombre: actual.bloque.sede.nombre,
+      },
+    };
+  }
+
+  /**
+   * RN-16: un espacio fuera de servicio no admite solicitudes y quienes tienen reservas futuras en él
+   * reciben el aviso para reprogramar. Las reservas no se tocan: las reprograma su dueño con la oficina.
+   */
+  private async avisarReprogramacion(
+    espacioId: string,
+    codigo: string,
+  ): Promise<void> {
+    const franjas = await this.prisma.franjaOcupada.findMany({
+      where: {
+        espacioId,
+        origen: 'RESERVA',
+        estado: { in: ['RETENIDA', 'CONFIRMADA'] },
+        fin: { gt: new Date() },
+      },
+      select: { reservaItem: { select: { solicitudId: true } } },
+    });
+    const solicitudes = new Set(
+      franjas
+        .map((f) => f.reservaItem?.solicitudId)
+        .filter((id): id is string => id !== undefined),
+    );
+    for (const solicitudId of solicitudes) {
+      await this.notificaciones.notificarSolicitante(solicitudId, {
+        titulo: `El espacio ${codigo} quedó fuera de servicio`,
+        cuerpo:
+          `El espacio ${codigo} quedó fuera de servicio y tu reserva debe reprogramarse. ` +
+          'Comunícate con la oficina de espacios para elegir otra fecha o espacio.',
+      });
+    }
+  }
+
+  /** RN-19: reemplaza el horario de operación del espacio. Una lista vacía quita la restricción. */
+  async reemplazarHorarios(
+    codigo: string,
+    datos: ReemplazarHorariosDto,
+  ): Promise<HorarioDto[]> {
+    const espacio = await this.prisma.espacio.findFirst({
+      where: { codigo: codigo.toUpperCase(), archivadoEn: null },
+      select: { id: true },
+    });
+    if (!espacio) throw noEncontrado('El espacio');
+
+    const dias = new Set<number>();
+    for (const horario of datos.horarios) {
+      if (dias.has(horario.diaSemana)) {
+        throw new ErrorDominio(
+          'DIA_REPETIDO',
+          'Hay más de un horario para el mismo día de la semana.',
+          422,
+        );
+      }
+      dias.add(horario.diaSemana);
+      if (horario.abre >= horario.cierra) {
+        throw new ErrorDominio(
+          'HORARIO_INVALIDO',
+          'La hora de apertura debe ser anterior a la de cierre.',
+          422,
+        );
+      }
+    }
+
+    const guardados = await this.prisma.$transaction(async (tx) => {
+      await tx.horarioOperacion.deleteMany({
+        where: { espacioId: espacio.id },
+      });
+      if (datos.horarios.length > 0) {
+        await tx.horarioOperacion.createMany({
+          data: datos.horarios.map((h) => ({ espacioId: espacio.id, ...h })),
+        });
+      }
+      return tx.horarioOperacion.findMany({
+        where: { espacioId: espacio.id },
+        orderBy: { diaSemana: 'asc' },
+      });
+    });
+    return guardados.map((h) => ({
+      diaSemana: h.diaSemana,
+      abre: h.abre,
+      cierra: h.cierra,
+    }));
   }
 
   /** Nada se borra: el espacio se archiva, salvo que tenga reservas futuras. */
@@ -130,6 +462,34 @@ export class EspaciosAdminService {
     await this.prisma.espacio.update({
       where: { id: espacio.id },
       data: { archivadoEn: new Date() },
+    });
+  }
+
+  /** Restaura un espacio archivado verificando que su bloque y sede estén activos (RF-INV-03). */
+  async restaurar(codigo: string): Promise<void> {
+    const espacio = await this.prisma.espacio.findUnique({
+      where: { codigo: codigo.toUpperCase() },
+      include: { bloque: { include: { sede: true } } },
+    });
+    if (!espacio) throw noEncontrado('El espacio');
+    if (espacio.archivadoEn === null) return;
+    if (!espacio.bloque.sede.activa) {
+      throw new ErrorDominio(
+        'SEDE_ARCHIVADA',
+        'No se puede restaurar el espacio porque su sede está archivada.',
+        422,
+      );
+    }
+    if (!espacio.bloque.activo) {
+      throw new ErrorDominio(
+        'BLOQUE_ARCHIVADO',
+        'No se puede restaurar el espacio porque su bloque está archivado.',
+        422,
+      );
+    }
+    await this.prisma.espacio.update({
+      where: { id: espacio.id },
+      data: { archivadoEn: null },
     });
   }
 }
