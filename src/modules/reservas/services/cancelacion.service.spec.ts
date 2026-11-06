@@ -277,3 +277,56 @@ describe('CancelacionService.cancelar', () => {
     );
   });
 });
+
+describe('CancelacionService.simularCancelacion y cerrar', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(AHORA);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('simula el porcentaje y monto de reembolso sin modificar la solicitud (SRS 10.4)', async () => {
+    const e = crearEntorno();
+    const r = await e.servicio.simularCancelacion(SOLICITUD_ID, usuario());
+    expect(r).toEqual({
+      diasDeAntelacion: 8,
+      porcentajeReembolso: 100,
+      valorReembolso: 200_000,
+      canceladaPorInstitucion: false,
+    });
+    expect(e.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('cierra una solicitud FINALIZADA cuando tiene acta de devolución (RN-15)', async () => {
+    const e = crearEntorno(
+      solicitud({
+        estado: 'FINALIZADA',
+        consecutivo: 'SOL-2026-0325',
+        actas: [{ id: 'a-1', tipo: 'DEVOLUCION', consecutivo: 'ACT-2026-0074' }],
+      }),
+    );
+    const r = await e.servicio.cerrar(
+      SOLICITUD_ID,
+      { observacion: 'Depósito devuelto sin descuentos.' },
+      usuario({ roles: ['ADMINISTRADOR'] }),
+      CONTEXTO,
+    );
+    expect(r).toEqual({
+      estadoSolicitud: 'CERRADA',
+      actaDevolucion: 'ACT-2026-0074',
+      observacion: 'Depósito devuelto sin descuentos.',
+    });
+    expect(e.tx.solicitud.updateMany).toHaveBeenCalledWith({
+      where: { id: SOLICITUD_ID, estado: 'FINALIZADA' },
+      data: { estado: 'CERRADA' },
+    });
+  });
+
+  it('rechaza cerrar si falta el acta de devolución (409 ACTA_DEVOLUCION_REQUERIDA)', async () => {
+    const e = crearEntorno(solicitud({ estado: 'FINALIZADA', actas: [] }));
+    const error = await rechazo(
+      e.servicio.cerrar(SOLICITUD_ID, {}, usuario({ roles: ['ADMINISTRADOR'] }), CONTEXTO),
+    );
+    expect(error).toMatchObject({ codigo: 'ACTA_DEVOLUCION_REQUERIDA', status: 409 });
+  });
+});

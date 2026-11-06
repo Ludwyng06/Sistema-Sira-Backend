@@ -33,7 +33,7 @@ export class ActasController {
   ) {}
 
   @Post()
-  @Roles('RESPONSABLE_ESPACIO')
+  @Roles('RESPONSABLE_ESPACIO', 'ADMINISTRADOR')
   @ApiOperation({
     summary: 'Registra el acta de entrega o de devolución (UC-05).',
     description:

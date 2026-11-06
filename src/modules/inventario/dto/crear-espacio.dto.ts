@@ -130,4 +130,11 @@ export class CrearEspacioDto {
   @Min(0, { message: minimo(0) })
   @Max(100, { message: (a: ValidationArguments) => `${a.property} no puede ser mayor que 100.` })
   depositoPorcentaje?: number;
+
+  @ApiPropertyOptional({ description: 'Valor comercial de referencia en pesos enteros (RF-INV-02).' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: entero })
+  @Min(0, { message: minimo(0) })
+  valorComercialReferencia?: number;
 }

@@ -19,12 +19,13 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
-import { Roles, UsuarioActual, type UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
+import { Publico, Roles, UsuarioActual, type UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import { ApiErrores } from '../../../shared/errores/api-errores.js';
 import {
   ActualizarDependenciaDto,
   CrearDependenciaDto,
   DependenciaAdminDto,
+  DependenciaPublicaDto,
   FiltrosDependenciasDto,
   PaginaDependenciasDto,
 } from '../dto/dependencia-admin.dto.js';
@@ -36,12 +37,23 @@ function contextoDe(ip: string, userAgent: string | undefined, correlacionId: st
 }
 
 @ApiTags('Administración')
-@ApiBearerAuth()
-@Roles('ADMINISTRADOR')
 @Controller('dependencias')
 export class DependenciasAdminController {
   constructor(private readonly servicio: DependenciasAdminService) {}
 
+  @Publico()
+  @Get('publicas')
+  @ApiOperation({
+    summary: 'Lista las dependencias institucionales activas sin requerir sesión (RF-AUT-02, RN-07).',
+    description: 'Para poblar el selector del formulario de registro de cuentas institucionales.',
+  })
+  @ApiOkResponse({ type: [DependenciaPublicaDto] })
+  listarPublicas(): Promise<DependenciaPublicaDto[]> {
+    return this.servicio.listarPublicas();
+  }
+
+  @ApiBearerAuth()
+  @Roles('ADMINISTRADOR')
   @Get()
   @ApiOperation({
     summary: 'Lista las dependencias.',
@@ -53,6 +65,8 @@ export class DependenciasAdminController {
     return this.servicio.listar(filtros);
   }
 
+  @ApiBearerAuth()
+  @Roles('ADMINISTRADOR')
   @Get(':id')
   @ApiOperation({ summary: 'Detalle de una dependencia.', description: 'Errores: 404 NO_ENCONTRADO.' })
   @ApiOkResponse({ type: DependenciaAdminDto })
@@ -61,6 +75,8 @@ export class DependenciasAdminController {
     return this.servicio.obtener(id);
   }
 
+  @ApiBearerAuth()
+  @Roles('ADMINISTRADOR')
   @Post()
   @ApiOperation({
     summary: 'Crea una dependencia.',
@@ -80,6 +96,8 @@ export class DependenciasAdminController {
     return this.servicio.crear(datos, actor, contextoDe(ip, userAgent, correlacionId));
   }
 
+  @ApiBearerAuth()
+  @Roles('ADMINISTRADOR')
   @Patch(':id')
   @ApiOperation({
     summary: 'Modifica nombre, centro de costo o jefe.',
@@ -98,6 +116,8 @@ export class DependenciasAdminController {
     return this.servicio.actualizar(id, datos, actor, contextoDe(ip, userAgent, correlacionId));
   }
 
+  @ApiBearerAuth()
+  @Roles('ADMINISTRADOR')
   @Patch(':id/archivar')
   @HttpCode(204)
   @ApiOperation({
@@ -118,6 +138,8 @@ export class DependenciasAdminController {
     return this.servicio.archivar(id, actor, contextoDe(ip, userAgent, correlacionId));
   }
 
+  @ApiBearerAuth()
+  @Roles('ADMINISTRADOR')
   @Patch(':id/restaurar')
   @HttpCode(204)
   @ApiOperation({

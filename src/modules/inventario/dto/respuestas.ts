@@ -275,6 +275,12 @@ export class FichaEspacioDto extends TarjetaEspacioDto {
   @ApiPropertyOptional({ type: Number, nullable: true, description: 'Depósito como porcentaje.' })
   depositoPorcentaje!: number | null;
 
+  @ApiPropertyOptional({
+    type: Number,
+    description: 'Suma de cantidad * valorUnitario de los elementos del espacio no dados de baja (RF-INV-07).',
+  })
+  valorTotalElementos?: number;
+
   @ApiProperty({ type: [FotoDetalleDto] })
   fotos!: FotoDetalleDto[];
 

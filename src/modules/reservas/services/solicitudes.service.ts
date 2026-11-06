@@ -310,12 +310,23 @@ export class SolicitudesService {
     }
 
     const servicios = new Map<string, { valorUnitario: number; subtotal: number }>();
+    let ivaServicios = 0;
     for (const item of fila.servicios) {
-      const valorUnitario = await this.tarifario.valorServicio(item.servicioId, fila.tipoTarifa);
-      servicios.set(item.id, { valorUnitario, subtotal: valorUnitario * item.cantidad });
+      const tarifa =
+        typeof (this.tarifario as { tarifaServicio?: unknown }).tarifaServicio === 'function'
+          ? await this.tarifario.tarifaServicio(item.servicioId, fila.tipoTarifa)
+          : { valor: await this.tarifario.valorServicio(item.servicioId, fila.tipoTarifa), ivaAplica: false, porcentajeIva: 0 };
+      const subtotalItem = tarifa.valor * item.cantidad;
+      servicios.set(item.id, { valorUnitario: tarifa.valor, subtotal: subtotalItem });
+      if (tarifa.ivaAplica && tarifa.porcentajeIva > 0) {
+        ivaServicios += Math.round((subtotalItem * tarifa.porcentajeIva) / 100);
+      }
     }
     const subtotalServicios = [...servicios.values()].reduce((suma, v) => suma + v.subtotal, 0);
-    return { estimado: totalizarSolicitud(franjas, subtotalServicios), vigentes: { reservas, servicios } };
+    return {
+      estimado: totalizarSolicitud(franjas, subtotalServicios, ivaServicios),
+      vigentes: { reservas, servicios },
+    };
   }
 
   private async alternativasVisibles(usuario: UsuarioAutenticado): Promise<Prisma.SolicitudWhereInput[]> {

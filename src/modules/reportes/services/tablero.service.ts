@@ -89,6 +89,37 @@ export class TableroService {
         horasReservadas: redondear(f.reservadas),
       }));
 
+    const enviadosEstados = new Set([
+      'ENVIADA',
+      'EN_REVISION',
+      'COTIZADA',
+      'PAGO_PENDIENTE',
+      'VENCIDA',
+      'CONFIRMADA',
+      'EN_USO',
+      'FINALIZADA',
+      'CERRADA',
+      'CANCELADA',
+      'REEMBOLSADA',
+      'RECHAZADA',
+    ]);
+    const confirmadosEstados = new Set([
+      'CONFIRMADA',
+      'EN_USO',
+      'FINALIZADA',
+      'CERRADA',
+      'CANCELADA',
+      'REEMBOLSADA',
+    ]);
+    const totalEnviadas = porEstado
+      .filter((f) => enviadosEstados.has(f.estado))
+      .reduce((suma, f) => suma + f._count._all, 0);
+    const totalConfirmadas = porEstado
+      .filter((f) => confirmadosEstados.has(f.estado))
+      .reduce((suma, f) => suma + f._count._all, 0);
+    const tasaConversionPorcentaje =
+      totalEnviadas > 0 ? redondear((totalConfirmadas / totalEnviadas) * 100, 1) : null;
+
     return {
       desde: desde.toISOString(),
       hasta: hasta.toISOString(),
@@ -106,6 +137,7 @@ export class TableroService {
         valorReferencia: exentas._sum.valorReferencia ?? 0,
         solicitudesExentas: exentas._count._all,
       },
+      tasaConversionPorcentaje,
     };
   }
 

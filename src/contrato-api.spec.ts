@@ -199,6 +199,7 @@ describe('Contrato de la API completa (Swagger)', () => {
       .sort();
 
     expect(publicos).toEqual([
+      'GET /api/dependencias/publicas',
       'GET /api/disponibilidad',
       'GET /api/disponibilidad/buscar',
       'GET /api/disponibilidad/sede',

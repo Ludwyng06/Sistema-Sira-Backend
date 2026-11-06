@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   Headers,
   HttpCode,
   Ip,
@@ -8,6 +9,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -24,9 +26,9 @@ import {
 import { Roles, UsuarioActual, type UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import { ApiErrores } from '../../../shared/errores/api-errores.js';
 import { AnularBloqueoDto, BloqueoAnuladoDto } from '../dto/anular-bloqueo.dto.js';
-import { CrearBloqueoDto } from '../dto/crear-bloqueo.dto.js';
+import { CrearBloqueoDto, FiltrosBloqueosDto } from '../dto/crear-bloqueo.dto.js';
 import { ReporteImportacionDto, SubirHorarioDto } from '../dto/importacion.dto.js';
-import { BloqueoCreadoDto } from '../dto/respuestas.js';
+import { BloqueoCreadoDto, BloqueoResumenDto } from '../dto/respuestas.js';
 import { BloqueosService } from '../services/bloqueos.service.js';
 import {
   ImportacionHorarioService,
@@ -41,6 +43,22 @@ export class BloqueosController {
     private readonly servicio: BloqueosService,
     private readonly importacion: ImportacionHorarioService,
   ) {}
+
+  @Get()
+  @Roles('ADMINISTRADOR', 'RESPONSABLE_ESPACIO', 'AUDITOR')
+  @ApiOperation({
+    summary: 'Lista los bloqueos activos de calendario filtrados por espacio y rango opcional (RF-CAL-07).',
+    description:
+      'Devuelve los bloqueos no anulados dentro del alcance del usuario, con el conteo de sus franjas activas.',
+  })
+  @ApiOkResponse({ type: [BloqueoResumenDto] })
+  @ApiErrores(400, 401, 403)
+  listar(
+    @Query() filtros: FiltrosBloqueosDto,
+    @UsuarioActual() usuario: UsuarioAutenticado,
+  ): Promise<BloqueoResumenDto[]> {
+    return this.servicio.listar(filtros, usuario);
+  }
 
   @Post()
   @Roles('ADMINISTRADOR', 'RESPONSABLE_ESPACIO')

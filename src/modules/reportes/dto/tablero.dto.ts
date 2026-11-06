@@ -97,4 +97,12 @@ export class TableroDto {
 
   @ApiProperty({ type: UsoInternoDto })
   usoInternoNoCobrado!: UsoInternoDto;
+
+  @ApiPropertyOptional({
+    type: Number,
+    nullable: true,
+    example: 66.67,
+    description: 'Porcentaje de solicitudes enviadas que llegaron a confirmación en el periodo (RF-REP-01).',
+  })
+  tasaConversionPorcentaje?: number | null;
 }

@@ -36,19 +36,21 @@ export class ActasService {
     private readonly notificaciones: NotificacionesService,
   ) {}
 
-  /** UC-05. Solo el responsable de un espacio de la solicitud; una acta de cada tipo por solicitud. */
+  /** UC-05. El responsable de un espacio de la solicitud o la administración; una acta de cada tipo por solicitud. */
   async crear(datos: CrearActaDto, usuario: UsuarioAutenticado, contexto: ContextoActa): Promise<ActaDto> {
+    const esAdmin = usuario.roles.includes(Rol.ADMINISTRADOR);
+    const esResponsable = usuario.roles.includes(Rol.RESPONSABLE_ESPACIO);
     const solicitud = await this.prisma.solicitud.findFirst({
       where: {
         id: datos.solicitudId,
-        reservas: { some: { espacio: { responsableId: usuario.id } } },
+        ...(esAdmin ? {} : { reservas: { some: { espacio: { responsableId: usuario.id } } } }),
       },
       include: {
         reservas: { select: { id: true, espacioId: true } },
         actas: { select: { tipo: true } },
       },
     });
-    if (!solicitud || !usuario.roles.includes(Rol.RESPONSABLE_ESPACIO)) throw noEncontrado('La solicitud');
+    if (!solicitud || (!esResponsable && !esAdmin)) throw noEncontrado('La solicitud');
 
     if (solicitud.actas.some((a) => a.tipo === datos.tipo)) {
       throw new ErrorDominio(

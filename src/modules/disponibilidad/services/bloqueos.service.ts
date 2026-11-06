@@ -1,12 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import rrule from 'rrule';
+import type { Prisma } from '../../../generated/prisma/client.js';
 import { OrigenFranja, Rol } from '../../../generated/prisma/enums.js';
 import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import { ErrorDominio, noEncontrado } from '../../../shared/errores/error-dominio.js';
 import { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import type { AnularBloqueoDto, BloqueoAnuladoDto } from '../dto/anular-bloqueo.dto.js';
-import type { CrearBloqueoDto } from '../dto/crear-bloqueo.dto.js';
-import type { BloqueoCreadoDto } from '../dto/respuestas.js';
+import type { CrearBloqueoDto, FiltrosBloqueosDto } from '../dto/crear-bloqueo.dto.js';
+import type { BloqueoCreadoDto, BloqueoResumenDto } from '../dto/respuestas.js';
 
 // rrule es CommonJS: en ESM solo se puede importar por defecto.
 const { RRule } = rrule;
@@ -102,6 +103,62 @@ export function expandirOcurrencias(datos: {
 @Injectable()
 export class BloqueosService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async listar(filtros: FiltrosBloqueosDto, usuario: UsuarioAutenticado): Promise<BloqueoResumenDto[]> {
+    const esAdminOAuditor =
+      usuario.roles.includes(Rol.ADMINISTRADOR) || usuario.roles.includes(Rol.AUDITOR);
+    const where: Prisma.BloqueoCalendarioWhereInput = {
+      anuladoEn: null,
+      ...(filtros.espacioId ? { espacioId: filtros.espacioId } : {}),
+      ...(!esAdminOAuditor
+        ? {
+            espacio: {
+              OR: [
+                { responsableId: usuario.id },
+                ...(usuario.dependencias.length > 0
+                  ? [{ dependenciaId: { in: usuario.dependencias } }]
+                  : []),
+              ],
+            },
+          }
+        : {}),
+    };
+
+    if (filtros.desde || filtros.hasta) {
+      const desde = filtros.desde ? new Date(filtros.desde) : undefined;
+      const hasta = filtros.hasta ? new Date(filtros.hasta) : undefined;
+      where.franjas = {
+        some: {
+          estado: 'BLOQUEO',
+          ...(hasta ? { inicio: { lt: hasta } } : {}),
+          ...(desde ? { fin: { gt: desde } } : {}),
+        },
+      };
+    }
+
+    const bloqueos = await this.prisma.bloqueoCalendario.findMany({
+      where,
+      include: {
+        franjas: {
+          where: { estado: 'BLOQUEO' },
+          select: { id: true },
+        },
+      },
+      orderBy: { inicio: 'asc' },
+    });
+
+    return bloqueos.map((b) => ({
+      id: b.id,
+      espacioId: b.espacioId,
+      motivo: b.motivo,
+      descripcion: b.descripcion,
+      inicio: b.inicio.toISOString(),
+      fin: b.fin.toISOString(),
+      rrule: b.rrule,
+      repetirHasta: b.repetirHasta ? b.repetirHasta.toISOString() : null,
+      franjasActivas: b.franjas.length,
+    }));
+  }
 
   async crear(
     datos: CrearBloqueoDto,

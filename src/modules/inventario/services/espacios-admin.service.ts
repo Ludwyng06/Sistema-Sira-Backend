@@ -17,11 +17,20 @@ const incluirAdministracion = {
   bloque: { include: { sede: true } },
   dependencia: { select: { codigo: true } },
   horarios: { orderBy: { diaSemana: 'asc' } },
+  elementos: {
+    where: { estado: { not: 'DADO_DE_BAJA' } },
+    select: { cantidad: true, valorUnitario: true },
+  },
 } satisfies Prisma.EspacioInclude;
 
 type FilaAdministracion = Prisma.EspacioGetPayload<{ include: typeof incluirAdministracion }>;
 
 function aAdministracion(espacio: FilaAdministracion): EspacioAdminDto {
+  const elementos = Array.isArray(espacio.elementos) ? espacio.elementos : [];
+  const valorTotalElementos = elementos.reduce(
+    (suma, el) => suma + el.cantidad * (el.valorUnitario ?? 0),
+    0,
+  );
   return {
     id: espacio.id,
     codigo: espacio.codigo,
@@ -38,6 +47,8 @@ function aAdministracion(espacio: FilaAdministracion): EspacioAdminDto {
     minutosDesmontaje: espacio.minutosDesmontaje,
     depositoValorFijo: espacio.depositoValorFijo,
     depositoPorcentaje: espacio.depositoPorcentaje === null ? null : Number(espacio.depositoPorcentaje),
+    valorComercialReferencia: espacio.valorComercialReferencia ?? null,
+    valorTotalElementos,
     responsableId: espacio.responsableId,
     dependenciaId: espacio.dependenciaId,
     dependenciaCodigo: espacio.dependencia?.codigo ?? null,
@@ -195,6 +206,9 @@ export class EspaciosAdminService {
         minutosDesmontaje: datos.minutosDesmontaje,
         depositoValorFijo: datos.depositoValorFijo,
         depositoPorcentaje: datos.depositoPorcentaje,
+        ...(datos.valorComercialReferencia !== undefined
+          ? { valorComercialReferencia: datos.valorComercialReferencia }
+          : {}),
       },
     });
 
@@ -309,6 +323,9 @@ export class EspaciosAdminService {
           : {}),
         ...(datos.depositoPorcentaje !== undefined
           ? { depositoPorcentaje: datos.depositoPorcentaje }
+          : {}),
+        ...(datos.valorComercialReferencia !== undefined
+          ? { valorComercialReferencia: datos.valorComercialReferencia }
           : {}),
       },
     });
@@ -445,6 +462,34 @@ export class EspaciosAdminService {
     await this.prisma.espacio.update({
       where: { id: espacio.id },
       data: { archivadoEn: new Date() },
+    });
+  }
+
+  /** Restaura un espacio archivado verificando que su bloque y sede estén activos (RF-INV-03). */
+  async restaurar(codigo: string): Promise<void> {
+    const espacio = await this.prisma.espacio.findUnique({
+      where: { codigo: codigo.toUpperCase() },
+      include: { bloque: { include: { sede: true } } },
+    });
+    if (!espacio) throw noEncontrado('El espacio');
+    if (espacio.archivadoEn === null) return;
+    if (!espacio.bloque.sede.activa) {
+      throw new ErrorDominio(
+        'SEDE_ARCHIVADA',
+        'No se puede restaurar el espacio porque su sede está archivada.',
+        422,
+      );
+    }
+    if (!espacio.bloque.activo) {
+      throw new ErrorDominio(
+        'BLOQUE_ARCHIVADO',
+        'No se puede restaurar el espacio porque su bloque está archivado.',
+        422,
+      );
+    }
+    await this.prisma.espacio.update({
+      where: { id: espacio.id },
+      data: { archivadoEn: null },
     });
   }
 }

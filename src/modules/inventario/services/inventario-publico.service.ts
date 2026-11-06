@@ -269,6 +269,10 @@ export class InventarioPublicoService {
       depositoValorFijo: espacio.depositoValorFijo,
       depositoPorcentaje:
         espacio.depositoPorcentaje === null ? null : Number(espacio.depositoPorcentaje),
+      valorTotalElementos: espacio.elementos.reduce(
+        (suma, el) => suma + el.cantidad * (el.valorUnitario ?? 0),
+        0,
+      ),
       fotos: espacio.fotografias.map((foto) => ({
         urlDetalle: foto.urlDetalle,
         urlTarjeta: foto.urlTarjeta,

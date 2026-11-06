@@ -148,4 +148,15 @@ export class ActualizarEspacioDto {
   @Min(0, { message: 'depositoPorcentaje debe ser al menos 0.' })
   @Max(100, { message: 'depositoPorcentaje no puede ser mayor que 100.' })
   depositoPorcentaje?: number | null;
+
+  @ApiPropertyOptional({
+    type: Number,
+    nullable: true,
+    description: 'Valor comercial de referencia en pesos enteros (RF-INV-02).',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'valorComercialReferencia debe ser un número entero en pesos.' })
+  @Min(0, { message: 'valorComercialReferencia debe ser al menos 0.' })
+  valorComercialReferencia?: number | null;
 }

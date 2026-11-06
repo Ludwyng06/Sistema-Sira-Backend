@@ -22,6 +22,12 @@ export interface TarifaCalculada extends ReturnType<typeof calcularTarifaEspacio
   tipoSolicitante: TipoSolicitante;
 }
 
+export interface TarifaServicioVigente {
+  valor: number;
+  ivaAplica: boolean;
+  porcentajeIva: number;
+}
+
 const MS_DIA = 86_400_000;
 /** El simulador es público: sin tope, un rango de años genera miles de líneas por petición. */
 export const MAXIMO_DIAS_CALCULO = 31;
@@ -34,12 +40,12 @@ function rangoInvalido(): ErrorDominio {
 export class TarifarioService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Tarifa vigente de un servicio para el tipo de solicitante, en pesos enteros (0 si no hay). */
-  async valorServicio(
+  /** Tarifa vigente de un servicio para el tipo de solicitante, con IVA configurado (RF-TAR-07). */
+  async tarifaServicio(
     servicioId: string,
     tipoSolicitante: TipoSolicitante,
     fecha: Date = new Date(),
-  ): Promise<number> {
+  ): Promise<TarifaServicioVigente> {
     const dia = new Date(`${fechaLocal(fecha)}T00:00:00.000Z`);
     const tarifa = await this.prisma.tarifa.findFirst({
       where: {
@@ -49,9 +55,26 @@ export class TarifarioService {
         OR: [{ vigenciaHasta: null }, { vigenciaHasta: { gte: dia } }],
       },
       orderBy: { vigenciaDesde: 'desc' },
-      select: { valor: true },
+      select: { valor: true, ivaAplica: true, porcentajeIva: true },
     });
-    return tarifa?.valor ?? 0;
+    if (!tarifa) {
+      return { valor: 0, ivaAplica: false, porcentajeIva: 0 };
+    }
+    return {
+      valor: tarifa.valor,
+      ivaAplica: tarifa.ivaAplica,
+      porcentajeIva: tarifa.ivaAplica ? Number(tarifa.porcentajeIva.toString()) : 0,
+    };
+  }
+
+  /** Tarifa vigente de un servicio para el tipo de solicitante, en pesos enteros (0 si no hay). */
+  async valorServicio(
+    servicioId: string,
+    tipoSolicitante: TipoSolicitante,
+    fecha: Date = new Date(),
+  ): Promise<number> {
+    const tarifa = await this.tarifaServicio(servicioId, tipoSolicitante, fecha);
+    return tarifa.valor;
   }
 
   /**

@@ -136,3 +136,15 @@ export class PaginaDependenciasDto {
   @ApiProperty({ example: 50 })
   porPagina!: number;
 }
+
+export class DependenciaPublicaDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ example: 'ING-SIS' })
+  codigo!: string;
+
+  @ApiProperty({ example: 'Ingeniería de Sistemas' })
+  nombre!: string;
+}
+

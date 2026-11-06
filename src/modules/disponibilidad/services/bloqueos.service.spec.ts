@@ -345,3 +345,40 @@ describe('BloqueosService.anular', () => {
     });
   });
 });
+
+describe('BloqueosService.listar', () => {
+  it('lista los bloqueos activos de un espacio con sus franjas activas (RF-CAL-07)', async () => {
+    const prisma = {
+      bloqueoCalendario: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: BLOQUEO_ID,
+            espacioId: ESPACIO_ID,
+            motivo: 'MANTENIMIENTO',
+            descripcion: 'Pintura',
+            inicio: new Date('2026-11-03T13:00:00.000Z'),
+            fin: new Date('2026-11-03T15:00:00.000Z'),
+            rrule: null,
+            repetirHasta: null,
+            franjas: [{ id: 'f-1' }, { id: 'f-2' }],
+          },
+        ]),
+      },
+    };
+    const servicio = new BloqueosService(prisma as unknown as PrismaService);
+    const r = await servicio.listar({ espacioId: ESPACIO_ID }, admin);
+    expect(r).toEqual([
+      {
+        id: BLOQUEO_ID,
+        espacioId: ESPACIO_ID,
+        motivo: 'MANTENIMIENTO',
+        descripcion: 'Pintura',
+        inicio: '2026-11-03T13:00:00.000Z',
+        fin: '2026-11-03T15:00:00.000Z',
+        rrule: null,
+        repetirHasta: null,
+        franjasActivas: 2,
+      },
+    ]);
+  });
+});

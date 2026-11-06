@@ -73,9 +73,28 @@ export class ReportesController {
     return this.entregar(tipo, 'csv', consulta, usuario);
   }
 
+  @Get(':tipo.pdf')
+  @Roles('ADMINISTRADOR', 'APROBADOR', 'TESORERIA', 'AUDITOR')
+  @ApiParam({ name: 'tipo', enum: TIPOS_REPORTE })
+  @ApiProduces('application/pdf')
+  @ApiOperation({
+    summary: 'Exporta un reporte a PDF (RF-REP-05).',
+    description:
+      'Tipos: solicitudes, recaudo, ocupacion e inventario. Mismo alcance por rol que XLSX y CSV.',
+  })
+  @ApiOkResponse({ description: 'Archivo PDF del reporte.' })
+  @ApiErrores(400, 401, 403)
+  async pdf(
+    @Param('tipo', new ParseEnumPipe(TIPOS_REPORTE)) tipo: TipoReporte,
+    @Query() consulta: ConsultaTableroDto,
+    @UsuarioActual() usuario: UsuarioAutenticado,
+  ): Promise<StreamableFile> {
+    return this.entregar(tipo, 'pdf', consulta, usuario);
+  }
+
   private async entregar(
     tipo: TipoReporte,
-    formato: 'xlsx' | 'csv',
+    formato: 'xlsx' | 'csv' | 'pdf',
     consulta: ConsultaTableroDto,
     usuario: UsuarioAutenticado,
   ): Promise<StreamableFile> {

@@ -1,15 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import ExcelJS from 'exceljs';
+import PDFDocument from 'pdfkit';
 import { EstadoOrdenPago, EstadoSolicitud, Rol } from '../../../generated/prisma/enums.js';
 import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import { ErrorDominio } from '../../../shared/errores/error-dominio.js';
+import { ANCHO_UTIL_PDF, construirPdf, dibujarTabla } from '../../../shared/pdf/formato-pdf.js';
 import { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import type { ConsultaTableroDto } from '../dto/tablero.dto.js';
 import { TableroService } from './tablero.service.js';
 
-export const TIPOS_REPORTE = ['solicitudes', 'recaudo', 'ocupacion'] as const;
+export const TIPOS_REPORTE = ['solicitudes', 'recaudo', 'ocupacion', 'inventario'] as const;
 export type TipoReporte = (typeof TIPOS_REPORTE)[number];
-export type FormatoReporte = 'xlsx' | 'csv';
+export type FormatoReporte = 'xlsx' | 'csv' | 'pdf';
 
 export const LIMITE_FILAS = 10_000;
 const MS_DIA = 86_400_000;
@@ -33,6 +35,7 @@ interface Tabla {
 const MIME: Record<FormatoReporte, string> = {
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   csv: 'text/csv; charset=utf-8',
+  pdf: 'application/pdf',
 };
 
 /**
@@ -76,6 +79,28 @@ async function aXlsx(tabla: Tabla): Promise<Buffer> {
   return Buffer.from(await libro.xlsx.writeBuffer());
 }
 
+async function aPdf(tabla: Tabla): Promise<Buffer> {
+  return construirPdf(PDFDocument, `Reporte ${tabla.titulo}`, (doc) => {
+    doc.font('Helvetica-Bold').fontSize(10).text('INSTITUCIÓN UNIVERSITARIA DEL PUTUMAYO', { align: 'center' });
+    doc.font('Helvetica').fontSize(9).text('Sistema SIRA · Reporte Institucional', { align: 'center' });
+    doc.moveDown(1);
+    const cols = Math.max(1, tabla.encabezados.length);
+    const anchoCol = Math.floor(ANCHO_UTIL_PDF / cols);
+    const anchos = tabla.encabezados.map((_, i) =>
+      i === cols - 1 ? ANCHO_UTIL_PDF - anchoCol * (cols - 1) : anchoCol,
+    );
+    dibujarTabla(
+      doc,
+      tabla.titulo,
+      tabla.encabezados,
+      anchos,
+      tabla.filas.map((f) => ({
+        columnas: f.map((v) => (v === null || v === undefined ? '' : String(v))),
+      })),
+    );
+  });
+}
+
 @Injectable()
 export class ExportacionService {
   constructor(
@@ -114,12 +139,57 @@ export class ExportacionService {
         ? await this.solicitudes(desde, hasta, dependencias)
         : tipo === 'recaudo'
           ? await this.recaudo(desde, hasta)
-          : await this.ocupacion(desde, hasta, dependencias);
+          : tipo === 'inventario'
+            ? await this.inventario(dependencias)
+            : await this.ocupacion(desde, hasta, dependencias);
 
     const segura: Tabla = { ...tabla, filas: tabla.filas.map((fila) => fila.map(neutralizarFormula)) };
-    const contenido = formato === 'csv' ? aCsv(segura) : await aXlsx(segura);
+    const contenido =
+      formato === 'csv'
+        ? aCsv(segura)
+        : formato === 'pdf'
+          ? await aPdf(tabla)
+          : await aXlsx(segura);
     const periodo = `${desde.toISOString().slice(0, 10)}_${hasta.toISOString().slice(0, 10)}`;
     return { contenido, nombre: `sira-${tipo}-${periodo}.${formato}`, tipoMime: MIME[formato] };
+  }
+
+  private async inventario(dependencias: string[] | null): Promise<Tabla> {
+    const filas = await this.prisma.elemento.findMany({
+      where: dependencias ? { espacio: { dependenciaId: { in: dependencias } } } : {},
+      orderBy: [{ espacio: { codigo: 'asc' } }, { nombre: 'asc' }],
+      take: LIMITE_FILAS,
+      include: {
+        espacio: { select: { codigo: true, nombre: true } },
+      },
+    });
+    return {
+      titulo: 'Inventario',
+      encabezados: [
+        'Espacio',
+        'Nombre espacio',
+        'Elemento',
+        'Placa',
+        'Cantidad',
+        'Unidad',
+        'Estado físico',
+        'Estado',
+        'Valor unitario (COP)',
+        'Valor total (COP)',
+      ],
+      filas: filas.map((f) => [
+        f.espacio.codigo,
+        f.espacio.nombre,
+        f.nombre,
+        f.placaInventario,
+        f.cantidad,
+        f.unidad,
+        f.estadoFisico,
+        f.estado,
+        f.valorUnitario ?? 0,
+        f.cantidad * (f.valorUnitario ?? 0),
+      ]),
+    };
   }
 
   private async solicitudes(desde: Date, hasta: Date, dependencias: string[] | null): Promise<Tabla> {

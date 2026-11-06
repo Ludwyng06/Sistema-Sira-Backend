@@ -469,16 +469,37 @@ export class DecisionesService {
 
     // RN-05: los servicios también se cotizan con la tarifa vigente a la emisión y desde aquí quedan congelados.
     const recalculosServicio: Cotizado['recalculosServicio'] = [];
+    let ivaServicios = 0;
     for (const item of solicitud.servicios) {
-      const valorUnitario = await this.tarifario.valorServicio(item.servicioId, tipoTarifa);
-      recalculosServicio.push({ id: item.id, valorUnitario, subtotal: valorUnitario * item.cantidad });
+      const tarifa =
+        typeof (this.tarifario as { tarifaServicio?: unknown }).tarifaServicio === 'function'
+          ? await this.tarifario.tarifaServicio(item.servicioId, tipoTarifa)
+          : { valor: await this.tarifario.valorServicio(item.servicioId, tipoTarifa), ivaAplica: false, porcentajeIva: 0 };
+      const valorUnitario = tarifa.valor;
+      const subtotalItem = valorUnitario * item.cantidad;
+      recalculosServicio.push({ id: item.id, valorUnitario, subtotal: subtotalItem });
+      if (tarifa.ivaAplica && tarifa.porcentajeIva > 0) {
+        ivaServicios += Math.round((subtotalItem * tarifa.porcentajeIva) / 100);
+      }
       if (esExenta) {
-        const comparable = await this.tarifario.valorServicio(item.servicioId, TipoSolicitante.PERSONA_NATURAL);
-        referencia += comparable * item.cantidad;
+        const tarifaComparable =
+          typeof (this.tarifario as { tarifaServicio?: unknown }).tarifaServicio === 'function'
+            ? await this.tarifario.tarifaServicio(item.servicioId, TipoSolicitante.PERSONA_NATURAL)
+            : {
+                valor: await this.tarifario.valorServicio(item.servicioId, TipoSolicitante.PERSONA_NATURAL),
+                ivaAplica: false,
+                porcentajeIva: 0,
+              };
+        const subComparable = tarifaComparable.valor * item.cantidad;
+        const ivaComparable =
+          tarifaComparable.ivaAplica && tarifaComparable.porcentajeIva > 0
+            ? Math.round((subComparable * tarifaComparable.porcentajeIva) / 100)
+            : 0;
+        referencia += subComparable + ivaComparable;
       }
     }
     const subtotalServicios = recalculosServicio.reduce((suma, s) => suma + s.subtotal, 0);
-    const { subtotal, iva, total, deposito } = totalizarSolicitud(franjas, subtotalServicios);
+    const { subtotal, iva, total, deposito } = totalizarSolicitud(franjas, subtotalServicios, ivaServicios);
     return {
       desglose: {
         tipoTarifa,

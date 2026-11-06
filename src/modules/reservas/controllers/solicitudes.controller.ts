@@ -31,7 +31,13 @@ import {
   SolicitudDto,
   SolicitudEnviadaDto,
 } from '../dto/solicitud.dto.js';
-import { CancelacionDto, CancelarSolicitudDto } from '../dto/cancelacion.dto.js';
+import {
+  CancelacionDto,
+  CancelarSolicitudDto,
+  CerrarSolicitudDto,
+  CierreSolicitudDto,
+  SimulacionCancelacionDto,
+} from '../dto/cancelacion.dto.js';
 import { DecidirSolicitudDto, DecisionRegistradaDto } from '../dto/decision.dto.js';
 import { CancelacionService } from '../services/cancelacion.service.js';
 import { CotizacionPdfService } from '../services/cotizacion-pdf.service.js';
@@ -198,6 +204,23 @@ export class SolicitudesController {
     });
   }
 
+  @Get(':id/simulacion-cancelacion')
+  @ApiOperation({
+    summary: 'Simula el porcentaje y valor de reembolso antes de cancelar (RN-14, SRS 10.4).',
+    description:
+      'Calcula los días de antelación, el porcentaje aplicable según la política de cancelación y el valor a ' +
+      'reembolsar en pesos enteros sin modificar el estado de la solicitud.\n\n' +
+      'Errores: 404 NO_ENCONTRADO.',
+  })
+  @ApiOkResponse({ type: SimulacionCancelacionDto })
+  @ApiErrores(400, 401, 404)
+  simularCancelacion(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @UsuarioActual() usuario: UsuarioAutenticado,
+  ): Promise<SimulacionCancelacionDto> {
+    return this.cancelacion.simularCancelacion(id, usuario);
+  }
+
   @Post(':id/cancelar')
   @HttpCode(200)
   @ApiOperation({
@@ -219,6 +242,33 @@ export class SolicitudesController {
     @Headers('x-correlation-id') correlacionId: string | undefined,
   ): Promise<CancelacionDto> {
     return this.cancelacion.cancelar(id, datos, usuario, {
+      ip,
+      userAgent: userAgent ?? null,
+      correlacionId: correlacionId ?? null,
+    });
+  }
+
+  @Post(':id/cerrar')
+  @HttpCode(200)
+  @Roles('RESPONSABLE_ESPACIO', 'ADMINISTRADOR')
+  @ApiOperation({
+    summary: 'Cierra formalmente una solicitud finalizada tras el acta de devolución (RN-13, RN-15, RF-ENT-04).',
+    description:
+      'Pasa la solicitud de FINALIZADA a CERRADA verificando que exista el acta de devolución registrada y ' +
+      'dejando constancia en historial y bitácora.\n\n' +
+      'Errores: 404 NO_ENCONTRADO; 409 SOLICITUD_NO_CERRABLE o ACTA_DEVOLUCION_REQUERIDA.',
+  })
+  @ApiOkResponse({ type: CierreSolicitudDto })
+  @ApiErrores(400, 401, 403, 404, 409)
+  cerrar(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() datos: CerrarSolicitudDto,
+    @UsuarioActual() usuario: UsuarioAutenticado,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent: string | undefined,
+    @Headers('x-correlation-id') correlacionId: string | undefined,
+  ): Promise<CierreSolicitudDto> {
+    return this.cancelacion.cerrar(id, datos, usuario, {
       ip,
       userAgent: userAgent ?? null,
       correlacionId: correlacionId ?? null,

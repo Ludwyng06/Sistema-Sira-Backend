@@ -2,7 +2,12 @@ import { formatearPesos } from '../../../shared/formato/pesos.js';
 import { Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { Prisma } from '../../../generated/prisma/client.js';
-import { EstadoOrdenPago, EstadoSolicitud, MedioPago } from '../../../generated/prisma/enums.js';
+import {
+  EstadoOrdenPago,
+  EstadoReembolso,
+  EstadoSolicitud,
+  MedioPago,
+} from '../../../generated/prisma/enums.js';
 import { ALMACENAMIENTO, type AlmacenamientoPort } from '../../../shared/almacenamiento/almacenamiento.port.js';
 import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import { ConsecutivoService } from '../../../shared/consecutivos/consecutivo.service.js';
@@ -15,11 +20,16 @@ import { transicionOConflicto } from '../../reservas/dominio/maquina-estados.js'
 import type {
   CuentaRecaudoDto,
   FiltrosOrdenesDto,
+  FiltrosReembolsosDto,
   OrdenPagoDto,
   OrdenPagoResumenDto,
   PagoTardioDto,
   PaginaOrdenesDto,
+  PaginaReembolsosDto,
+  ReembolsoResueltoDto,
+  ReembolsoResumenDto,
   RegistrarPagoTardioDto,
+  ResolverReembolsoDto,
   VerificacionDto,
   VerificarPagoDto,
 } from '../dto/pago.dto.js';
@@ -558,9 +568,12 @@ export class PagosService {
     return { datos, total, pagina: filtros.pagina, porPagina: filtros.porPagina };
   }
 
-  /** Descarga del comprobante: su dueño, tesorería y auditoría. */
+  /** Descarga del comprobante: su dueño, tesorería, administración y auditoría. */
   async descargarSoporte(ordenId: string, usuario: UsuarioAutenticado): Promise<SoporteDescargable> {
-    const revisor = usuario.roles.includes('TESORERIA') || usuario.roles.includes('AUDITOR');
+    const revisor =
+      usuario.roles.includes('TESORERIA') ||
+      usuario.roles.includes('AUDITOR') ||
+      usuario.roles.includes('ADMINISTRADOR');
     const orden = revisor
       ? await this.prisma.ordenPago.findUnique({ where: { id: ordenId } })
       : await this.ordenPropia(ordenId, usuario);
@@ -569,6 +582,213 @@ export class PagosService {
     const tipoMime = contenido ? detectarTipoMime(contenido) : null;
     if (!contenido || !tipoMime) throw noEncontrado('El soporte de pago');
     return { contenido, tipoMime, nombre: `${orden.referencia}.${EXTENSION_POR_TIPO[tipoMime]}` };
+  }
+
+  /** RF-PAG-10, RN-14: lista los reembolsos filtrados por estado. */
+  async listarReembolsos(filtros: FiltrosReembolsosDto): Promise<PaginaReembolsosDto> {
+    const where: Prisma.ReembolsoWhereInput = filtros.estado ? { estado: filtros.estado } : {};
+    const [total, filas] = await Promise.all([
+      this.prisma.reembolso.count({ where }),
+      this.prisma.reembolso.findMany({
+        where,
+        orderBy: { creadoEn: 'desc' },
+        skip: (filtros.pagina - 1) * filtros.porPagina,
+        take: filtros.porPagina,
+        include: {
+          ordenPago: {
+            select: {
+              referencia: true,
+              cotizacion: {
+                select: {
+                  solicitudId: true,
+                  solicitud: { select: { consecutivo: true } },
+                },
+              },
+            },
+          },
+        },
+      }),
+    ]);
+    const datos: ReembolsoResumenDto[] = filas.map((f) => ({
+      id: f.id,
+      ordenPagoId: f.ordenPagoId,
+      referenciaOrden: f.ordenPago.referencia,
+      solicitudId: f.ordenPago.cotizacion.solicitudId,
+      consecutivoSolicitud: f.ordenPago.cotizacion.solicitud.consecutivo,
+      valor: f.valor,
+      motivo: f.motivo,
+      estado: f.estado,
+      tieneSoporte: f.soporteUrl !== null,
+      creadoEn: f.creadoEn.toISOString(),
+      aplicadoEn: f.aplicadoEn?.toISOString() ?? null,
+    }));
+    return { datos, total, pagina: filtros.pagina, porPagina: filtros.porPagina };
+  }
+
+  /**
+   * RF-PAG-10, RN-14: Tesorería marca un reembolso como APLICADO (con soporte opcional/obligatorio)
+   * o RECHAZADO (con motivo). Al aplicarse sobre una solicitud CANCELADA, la solicitud pasa a REEMBOLSADA.
+   */
+  async resolverReembolso(
+    reembolsoId: string,
+    datos: ResolverReembolsoDto,
+    archivo: SoporteSubido | undefined,
+    usuario: UsuarioAutenticado,
+    contexto: ContextoPago,
+  ): Promise<ReembolsoResueltoDto> {
+    const reembolso = await this.prisma.reembolso.findUnique({
+      where: { id: reembolsoId },
+      include: {
+        ordenPago: {
+          include: {
+            cotizacion: {
+              include: {
+                solicitud: { select: { id: true, consecutivo: true, estado: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!reembolso) throw noEncontrado('El reembolso');
+    if (reembolso.estado !== EstadoReembolso.SOLICITADO) {
+      throw new ErrorDominio(
+        'REEMBOLSO_YA_RESUELTO',
+        'Este reembolso ya fue resuelto anteriormente.',
+        409,
+      );
+    }
+
+    const motivo = datos.motivo?.trim() ?? '';
+    if (datos.resultado === 'RECHAZADO' && motivo.length === 0) {
+      throw new ErrorDominio('MOTIVO_REQUERIDO', 'Indica por qué se rechaza el reembolso.', 422);
+    }
+
+    let claveSoporte: string | null = null;
+    if (datos.resultado === 'APLICADO') {
+      if (!archivo || archivo.size === 0) {
+        throw new ErrorDominio(
+          'ARCHIVO_REQUERIDO',
+          'Adjunta el soporte del reembolso (PDF, PNG o JPG).',
+          422,
+        );
+      }
+      if (archivo.size > TAMANO_MAXIMO_SOPORTE) {
+        throw new ErrorDominio('ARCHIVO_MUY_GRANDE', 'El archivo no puede superar 10 MB.', 422);
+      }
+      const tipoMime = detectarTipoMime(archivo.buffer);
+      if (!tipoMime) {
+        throw new ErrorDominio('ARCHIVO_NO_PERMITIDO', 'Solo se aceptan archivos PDF, PNG o JPG.', 422);
+      }
+      claveSoporte = `reembolsos/${reembolso.id}/${randomUUID()}.${EXTENSION_POR_TIPO[tipoMime]}`;
+      await this.almacenamiento.guardar(claveSoporte, archivo.buffer, tipoMime);
+    }
+
+    const solicitud = reembolso.ordenPago.cotizacion.solicitud;
+    const ahora = new Date();
+
+    try {
+      const resuelto = await this.prisma.$transaction(async (tx) => {
+        const estadoReembolso =
+          datos.resultado === 'APLICADO' ? EstadoReembolso.APLICADO : EstadoReembolso.RECHAZADO;
+        const { count } = await tx.reembolso.updateMany({
+          where: { id: reembolsoId, estado: EstadoReembolso.SOLICITADO },
+          data: {
+            estado: estadoReembolso,
+            ...(claveSoporte ? { soporteUrl: claveSoporte } : {}),
+            ...(datos.resultado === 'APLICADO' ? { aplicadoEn: ahora } : {}),
+            ...(motivo ? { motivo: `${reembolso.motivo} · ${motivo}` } : {}),
+          },
+        });
+        if (count === 0) {
+          throw new ErrorDominio('REEMBOLSO_YA_RESUELTO', 'Este reembolso ya fue resuelto.', 409);
+        }
+
+        let estadoSolicitud: EstadoSolicitud = solicitud.estado;
+        if (datos.resultado === 'APLICADO' && solicitud.estado === EstadoSolicitud.CANCELADA) {
+          const destino = transicionOConflicto(solicitud.estado, 'REEMBOLSAR');
+          await tx.solicitud.update({
+            where: { id: solicitud.id },
+            data: { estado: destino },
+          });
+          await tx.historialEstadoSolicitud.create({
+            data: {
+              solicitudId: solicitud.id,
+              estadoAnterior: solicitud.estado,
+              estadoNuevo: destino,
+              usuarioId: usuario.id,
+              observacion: motivo || `Reembolso ${reembolso.ordenPago.referencia} aplicado`,
+            },
+          });
+          estadoSolicitud = destino;
+        }
+
+        await tx.bitacora.create({
+          data: {
+            usuarioId: usuario.id,
+            accion: datos.resultado === 'APLICADO' ? 'REEMBOLSO_APLICADO' : 'REEMBOLSO_RECHAZADO',
+            entidad: 'Reembolso',
+            entidadId: reembolsoId,
+            ip: contexto.ip,
+            userAgent: contexto.userAgent,
+            correlacionId: contexto.correlacionId,
+            datosDespues: {
+              ordenPagoId: reembolso.ordenPagoId,
+              solicitudId: solicitud.id,
+              valor: reembolso.valor,
+              estadoReembolso,
+              estadoSolicitud,
+              motivo: motivo || null,
+            },
+          },
+        });
+
+        return { estadoReembolso, estadoSolicitud };
+      });
+
+      const etiqueta = solicitud.consecutivo ?? reembolso.ordenPago.referencia;
+      await this.notificaciones.notificarSolicitante(solicitud.id, {
+        titulo:
+          datos.resultado === 'APLICADO'
+            ? `Reembolso aplicado de la solicitud ${etiqueta}`
+            : `Reembolso rechazado de la solicitud ${etiqueta}`,
+        cuerpo:
+          datos.resultado === 'APLICADO'
+            ? `Tesorería aplicó el reembolso por ${formatearPesos(reembolso.valor)} de la orden ${reembolso.ordenPago.referencia}.`
+            : `El reembolso de la orden ${reembolso.ordenPago.referencia} fue rechazado. Motivo: ${motivo}.`,
+      });
+
+      return resuelto;
+    } catch (error) {
+      if (claveSoporte) await this.almacenamiento.eliminar(claveSoporte);
+      throw error;
+    }
+  }
+
+  /** Descarga el soporte del reembolso: su dueño, tesorería, administración y auditoría. */
+  async descargarSoporteReembolso(reembolsoId: string, usuario: UsuarioAutenticado): Promise<SoporteDescargable> {
+    const revisor =
+      usuario.roles.includes('TESORERIA') ||
+      usuario.roles.includes('AUDITOR') ||
+      usuario.roles.includes('ADMINISTRADOR');
+    const reembolso = await this.prisma.reembolso.findFirst({
+      where: {
+        id: reembolsoId,
+        ...(revisor
+          ? {}
+          : { ordenPago: { cotizacion: { solicitud: { solicitante: { usuarioId: usuario.id } } } } }),
+      },
+      include: { ordenPago: { select: { referencia: true } } },
+    });
+    if (!reembolso?.soporteUrl) throw noEncontrado('El soporte del reembolso');
+    const contenido = await this.almacenamiento.leer(reembolso.soporteUrl);
+    const tipoMime = contenido ? detectarTipoMime(contenido) : null;
+    if (!contenido || !tipoMime) throw noEncontrado('El soporte del reembolso');
+    return {
+      contenido,
+      tipoMime,
+      nombre: `reembolso-${reembolso.ordenPago.referencia}.${EXTENSION_POR_TIPO[tipoMime]}`,
+    };
   }
 
   private async ordenPropia(ordenId: string, usuario: UsuarioAutenticado): Promise<FilaOrden> {

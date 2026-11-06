@@ -68,7 +68,11 @@ export class ElementosAdminService {
   constructor(private readonly prisma: PrismaService) {}
 
   async listar(filtros: FiltrosElementosDto, usuario?: UsuarioAutenticado): Promise<PaginaElementosDto> {
-    const esResponsable = usuario !== undefined && !usuario.roles.includes('ADMINISTRADOR');
+    const tieneAlcanceGlobal =
+      usuario === undefined ||
+      usuario.roles.includes('ADMINISTRADOR') ||
+      usuario.roles.includes('AUDITOR');
+    const esResponsable = !tieneAlcanceGlobal;
     const alcance = esResponsable ? { responsableId: usuario.id, archivadoEn: null } : undefined;
     if (alcance && filtros.espacioId) {
       const espacio = await this.prisma.espacio.findFirst({

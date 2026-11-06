@@ -52,6 +52,20 @@ function crearEntorno(actual: unknown = fila()) {
 const rechazo = (promesa: Promise<unknown>): Promise<unknown> => promesa.catch((e: unknown) => e);
 
 describe('DependenciasAdminService', () => {
+  it('lista las dependencias activas públicamente sin exponer datos internos (RF-AUT-02)', async () => {
+    const e = crearEntorno();
+    e.prisma.dependencia.findMany.mockResolvedValue([
+      { id: DEPENDENCIA_ID, codigo: 'ING-SIS', nombre: 'Ingeniería de Sistemas' },
+    ]);
+    const r = await e.servicio.listarPublicas();
+    expect(e.prisma.dependencia.findMany).toHaveBeenCalledWith({
+      where: { activa: true },
+      orderBy: { nombre: 'asc' },
+      select: { id: true, codigo: true, nombre: true },
+    });
+    expect(r).toEqual([{ id: DEPENDENCIA_ID, codigo: 'ING-SIS', nombre: 'Ingeniería de Sistemas' }]);
+  });
+
   it('lista paginada con el jefe y filtro por estado', async () => {
     const e = crearEntorno();
     const r = await e.servicio.listar({ activa: false, pagina: 1, porPagina: 50 });

@@ -139,4 +139,30 @@ describe('Gestión administrativa de espacios', () => {
       expect(e.prisma.espacio.update).toHaveBeenCalledTimes(1);
     });
   });
+
+  it('calcula valorTotalElementos y permite restaurar un espacio archivado cuando sede y bloque están activos', async () => {
+    const e = entorno();
+    e.prisma.espacio.findUnique.mockResolvedValueOnce({
+      ...fila,
+      valorComercialReferencia: 25_000_000,
+      elementos: [
+        { cantidad: 1, valorUnitario: 2_400_000 },
+        { cantidad: 25, valorUnitario: 180_000 },
+      ],
+    } as never);
+    const detalle = await e.servicio.obtener('A-101');
+    expect(detalle.valorComercialReferencia).toBe(25_000_000);
+    expect(detalle.valorTotalElementos).toBe(6_900_000);
+
+    e.prisma.espacio.findUnique.mockResolvedValueOnce({
+      ...fila,
+      archivadoEn: new Date(),
+      bloque: { ...fila.bloque, activo: true, sede: { ...fila.bloque.sede, activa: true } },
+    } as never);
+    await e.servicio.restaurar('a-101');
+    expect(e.prisma.espacio.update).toHaveBeenCalledWith({
+      where: { id: ID },
+      data: { archivadoEn: null },
+    });
+  });
 });

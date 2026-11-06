@@ -7,6 +7,7 @@ import type {
   ActualizarDependenciaDto,
   CrearDependenciaDto,
   DependenciaAdminDto,
+  DependenciaPublicaDto,
   FiltrosDependenciasDto,
   PaginaDependenciasDto,
 } from '../dto/dependencia-admin.dto.js';
@@ -38,6 +39,14 @@ function codigoRepetido(): ErrorDominio {
 @Injectable()
 export class DependenciasAdminService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async listarPublicas(): Promise<DependenciaPublicaDto[]> {
+    return this.prisma.dependencia.findMany({
+      where: { activa: true },
+      orderBy: { nombre: 'asc' },
+      select: { id: true, codigo: true, nombre: true },
+    });
+  }
 
   async listar(filtros: FiltrosDependenciasDto): Promise<PaginaDependenciasDto> {
     const where: Prisma.DependenciaWhereInput = filtros.activa === undefined ? {} : { activa: filtros.activa };

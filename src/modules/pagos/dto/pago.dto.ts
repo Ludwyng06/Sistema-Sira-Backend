@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
-import { EstadoOrdenPago, MedioPago } from '../../../generated/prisma/enums.js';
+import { EstadoOrdenPago, EstadoReembolso, MedioPago } from '../../../generated/prisma/enums.js';
 
 export class CrearOrdenPagoDto {
   @ApiProperty({ format: 'uuid', example: '6e1d8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b', description: 'Solicitud cotizada.' })
@@ -186,3 +186,104 @@ export class PagoTardioDto {
   @ApiProperty({ type: Number, nullable: true, example: 350000, description: 'Valor a reembolsar, si aplica.' })
   valorReembolso!: number | null;
 }
+
+// ---------------------------------------------------------------- Reembolsos
+
+export class FiltrosReembolsosDto {
+  @ApiPropertyOptional({ enum: EstadoReembolso })
+  @IsOptional()
+  @IsEnum(EstadoReembolso, { message: 'estado no es válido.' })
+  estado?: EstadoReembolso;
+
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'pagina debe ser un número entero.' })
+  @Min(1, { message: 'pagina debe ser al menos 1.' })
+  @Max(100_000, { message: 'pagina no puede ser mayor que 100000.' })
+  pagina: number = 1;
+
+  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'porPagina debe ser un número entero.' })
+  @Min(1, { message: 'porPagina debe ser al menos 1.' })
+  @Max(100, { message: 'porPagina no puede ser mayor que 100.' })
+  porPagina: number = 20;
+}
+
+export class ReembolsoResumenDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  ordenPagoId!: string;
+
+  @ApiProperty({ example: 'OP-2026-000001' })
+  referenciaOrden!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  solicitudId!: string;
+
+  @ApiProperty({ type: String, nullable: true, example: 'SOL-2026-0001' })
+  consecutivoSolicitud!: string | null;
+
+  @ApiProperty({ example: 180000 })
+  valor!: number;
+
+  @ApiProperty({ example: 'Cancelación con 5 días de antelación (100 %)' })
+  motivo!: string;
+
+  @ApiProperty({ enum: EstadoReembolso })
+  estado!: EstadoReembolso;
+
+  @ApiProperty({ example: false })
+  tieneSoporte!: boolean;
+
+  @ApiProperty({ example: '2026-10-25T15:00:00.000Z' })
+  creadoEn!: string;
+
+  @ApiProperty({ type: String, nullable: true })
+  aplicadoEn!: string | null;
+}
+
+export class PaginaReembolsosDto {
+  @ApiProperty({ type: [ReembolsoResumenDto] })
+  datos!: ReembolsoResumenDto[];
+
+  @ApiProperty({ example: 3 })
+  total!: number;
+
+  @ApiProperty({ example: 1 })
+  pagina!: number;
+
+  @ApiProperty({ example: 20 })
+  porPagina!: number;
+}
+
+export const RESULTADOS_REEMBOLSO = ['APLICADO', 'RECHAZADO'] as const;
+
+export class ResolverReembolsoDto {
+  @ApiProperty({ enum: RESULTADOS_REEMBOLSO, example: 'APLICADO' })
+  @IsIn(RESULTADOS_REEMBOLSO, { message: 'resultado debe ser APLICADO o RECHAZADO.' })
+  resultado!: (typeof RESULTADOS_REEMBOLSO)[number];
+
+  @ApiPropertyOptional({
+    example: 'No procede según verificación contable.',
+    maxLength: 500,
+    description: 'Obligatorio si el resultado es RECHAZADO.',
+  })
+  @IsOptional()
+  @IsString({ message: 'motivo debe ser texto.' })
+  @MaxLength(500, { message: 'motivo no puede superar 500 caracteres.' })
+  motivo?: string;
+}
+
+export class ReembolsoResueltoDto {
+  @ApiProperty({ enum: EstadoReembolso })
+  estadoReembolso!: EstadoReembolso;
+
+  @ApiProperty({ example: 'REEMBOLSADA' })
+  estadoSolicitud!: string;
+}
+

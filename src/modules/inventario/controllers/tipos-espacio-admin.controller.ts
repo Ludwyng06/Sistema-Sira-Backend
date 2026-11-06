@@ -35,6 +35,7 @@ export class TiposEspacioAdminController {
   constructor(private readonly servicio: TiposEspacioAdminService) {}
 
   @Get('gestion')
+  @Roles('ADMINISTRADOR', 'AUDITOR')
   @ApiOperation({
     summary: 'Lista los tipos de espacio (activos y archivados).',
     description: 'Paginada. El listado público solo muestra los activos.',
@@ -46,6 +47,7 @@ export class TiposEspacioAdminController {
   }
 
   @Get(':id')
+  @Roles('ADMINISTRADOR', 'AUDITOR')
   @ApiOperation({
     summary: 'Detalle del tipo de espacio.',
     description: 'Errores: 404 NO_ENCONTRADO.',

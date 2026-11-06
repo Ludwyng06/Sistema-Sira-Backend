@@ -604,4 +604,52 @@ describe('PagosService', () => {
       });
     });
   });
+
+  describe('listarReembolsos y resolverReembolso', () => {
+    it('aplica un reembolso con soporte y pasa la solicitud de CANCELADA a REEMBOLSADA (RF-PAG-10)', async () => {
+      const e = crearEntorno();
+      (e.tx as Record<string, unknown>).reembolso = {
+        create: vi.fn().mockResolvedValue({}),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      };
+      (e.prisma as Record<string, unknown>).reembolso = {
+        count: vi.fn().mockResolvedValue(1),
+        findMany: vi.fn().mockResolvedValue([]),
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'reem-1',
+          ordenPagoId: ORDEN_ID,
+          valor: 180_000,
+          motivo: 'Cancelación con antelación',
+          estado: 'SOLICITADO',
+          ordenPago: {
+            referencia: 'OP-2026-000001',
+            cotizacion: {
+              solicitud: { id: SOLICITUD_ID, consecutivo: 'SOL-2026-0285', estado: 'CANCELADA' },
+            },
+          },
+        }),
+      };
+
+      const r = await e.servicio.resolverReembolso(
+        'reem-1',
+        { resultado: 'APLICADO' },
+        { size: PDF.length, buffer: PDF },
+        tesoreria,
+        CONTEXTO,
+      );
+
+      expect(r).toEqual({
+        estadoReembolso: 'APLICADO',
+        estadoSolicitud: 'REEMBOLSADA',
+      });
+      expect(e.tx.solicitud.update).toHaveBeenCalledWith({
+        where: { id: SOLICITUD_ID },
+        data: { estado: 'REEMBOLSADA' },
+      });
+      expect(e.notificaciones.notificarSolicitante).toHaveBeenCalledWith(
+        SOLICITUD_ID,
+        expect.objectContaining({ titulo: expect.stringContaining('Reembolso aplicado') }),
+      );
+    });
+  });
 });

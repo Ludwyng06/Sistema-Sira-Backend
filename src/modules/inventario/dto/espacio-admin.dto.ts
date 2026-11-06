@@ -47,6 +47,9 @@ export class EspacioAdminDto {
   @ApiProperty() minutosDesmontaje!: number;
   @ApiProperty({ type: Number, nullable: true }) depositoValorFijo!: number | null;
   @ApiProperty({ type: Number, nullable: true }) depositoPorcentaje!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) valorComercialReferencia!: number | null;
+  @ApiProperty({ description: 'Suma de cantidad * valorUnitario de los elementos no dados de baja (RF-INV-07).' })
+  valorTotalElementos!: number;
   @ApiProperty({ type: String, format: 'uuid', nullable: true }) responsableId!: string | null;
   @ApiProperty({ type: String, format: 'uuid', nullable: true }) dependenciaId!: string | null;
   @ApiProperty({ type: String, nullable: true }) dependenciaCodigo!: string | null;

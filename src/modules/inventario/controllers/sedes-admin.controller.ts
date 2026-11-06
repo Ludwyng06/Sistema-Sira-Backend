@@ -35,6 +35,7 @@ export class SedesAdminController {
   constructor(private readonly servicio: SedesAdminService) {}
 
   @Get('gestion')
+  @Roles('ADMINISTRADOR', 'AUDITOR')
   @ApiOperation({
     summary: 'Lista las sedes (activas y archivadas).',
     description: 'Paginada. El listado público solo muestra los activos.',
@@ -46,6 +47,7 @@ export class SedesAdminController {
   }
 
   @Get(':id')
+  @Roles('ADMINISTRADOR', 'AUDITOR')
   @ApiOperation({
     summary: 'Detalle de la sede.',
     description: 'Errores: 404 NO_ENCONTRADO.',

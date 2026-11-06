@@ -37,7 +37,7 @@ export class ElementosAdminController {
   constructor(private readonly servicio: ElementosAdminService) {}
 
   @Get()
-  @Roles('ADMINISTRADOR', 'RESPONSABLE_ESPACIO')
+  @Roles('ADMINISTRADOR', 'RESPONSABLE_ESPACIO', 'AUDITOR')
   @ApiOperation({
     summary: 'Lista los elementos del inventario.',
     description:
@@ -52,7 +52,7 @@ export class ElementosAdminController {
   }
 
   @Get(':id')
-  @Roles('ADMINISTRADOR')
+  @Roles('ADMINISTRADOR', 'AUDITOR')
   @ApiOperation({
     summary: 'Detalle de un elemento.',
     description: 'Errores: 404 NO_ENCONTRADO.',

@@ -9,7 +9,13 @@ import { fechaLocal } from '../../../shared/tiempo/zona-horaria.js';
 import { NotificacionesService } from '../../notificaciones/services/notificaciones.service.js';
 import { motivoReembolso } from '../dominio/reembolso.js';
 import { TransicionInvalida, validarTransicion } from '../dominio/maquina-estados.js';
-import type { CancelarSolicitudDto, CancelacionDto } from '../dto/cancelacion.dto.js';
+import type {
+  CancelarSolicitudDto,
+  CancelacionDto,
+  CerrarSolicitudDto,
+  CierreSolicitudDto,
+  SimulacionCancelacionDto,
+} from '../dto/cancelacion.dto.js';
 
 export interface ContextoCancelacion {
   ip: string | null;
@@ -183,5 +189,163 @@ export class CancelacionService {
         : `Cancelaste tu reserva. Reembolso del ${porcentaje} % (${formatearPesos(valorReembolso)}).`,
     });
     return cancelada;
+  }
+
+  /** Simula el porcentaje y monto de reembolso según RN-14 sin modificar la solicitud (SRS 10.4). */
+  async simularCancelacion(id: string, usuario: UsuarioAutenticado): Promise<SimulacionCancelacionDto> {
+    const esAdministrador = usuario.roles.includes(Rol.ADMINISTRADOR);
+    const esAuditorOTesoreria =
+      usuario.roles.includes(Rol.AUDITOR) || usuario.roles.includes(Rol.TESORERIA);
+    const esResponsable = usuario.roles.includes(Rol.RESPONSABLE_ESPACIO);
+    const perfil = await this.prisma.solicitante.findUnique({
+      where: { usuarioId: usuario.id },
+      select: { id: true },
+    });
+    const solicitud = await this.prisma.solicitud.findFirst({
+      where: {
+        id,
+        OR: [
+          ...(perfil ? [{ solicitanteId: perfil.id }] : []),
+          ...(esAdministrador || esAuditorOTesoreria ? [{}] : []),
+          ...(esResponsable ? [{ reservas: { some: { espacio: { responsableId: usuario.id } } } }] : []),
+        ],
+      },
+      include: {
+        reservas: { select: { id: true, inicio: true }, orderBy: { inicio: 'asc' } },
+        cotizaciones: {
+          orderBy: { creadaEn: 'desc' },
+          take: 1,
+        },
+      },
+    });
+    if (!solicitud || (!perfil && !esAdministrador && !esAuditorOTesoreria && !esResponsable)) {
+      throw noEncontrado('La solicitud');
+    }
+
+    const ahora = new Date();
+    const primerInicio = solicitud.reservas[0]?.inicio ?? ahora;
+    const institucional = esAdministrador && perfil?.id !== solicitud.solicitanteId;
+    const diasDeAntelacion = Math.max(
+      0,
+      Math.floor(
+        (Date.parse(`${fechaLocal(primerInicio)}T00:00:00Z`) - Date.parse(`${fechaLocal(ahora)}T00:00:00Z`)) /
+          MS_DIA,
+      ),
+    );
+    const politica = leerPolitica(await this.parametros.obtenerJson('politica_cancelacion'));
+    const cotizacion = solicitud.cotizaciones[0];
+    const cobrada = cotizacion !== undefined && !cotizacion.esExenta && cotizacion.total > 0;
+    const porcentaje = !cobrada ? 0 : institucional ? 100 : porcentajeReembolso(politica, diasDeAntelacion);
+    const valorReembolso = cobrada ? Math.round((cotizacion.total * porcentaje) / 100) : 0;
+
+    return {
+      diasDeAntelacion,
+      porcentajeReembolso: porcentaje,
+      valorReembolso,
+      canceladaPorInstitucion: institucional,
+    };
+  }
+
+  /**
+   * RN-13, RN-15, RF-ENT-04: cierra una solicitud FINALIZADA tras verificar que tiene
+   * acta de devolución registrada.
+   */
+  async cerrar(
+    id: string,
+    datos: CerrarSolicitudDto,
+    usuario: UsuarioAutenticado,
+    contexto: ContextoCancelacion,
+  ): Promise<CierreSolicitudDto> {
+    const esAdministrador = usuario.roles.includes(Rol.ADMINISTRADOR);
+    const esResponsable = usuario.roles.includes(Rol.RESPONSABLE_ESPACIO);
+    const solicitud = await this.prisma.solicitud.findFirst({
+      where: {
+        id,
+        OR: [
+          ...(esAdministrador ? [{}] : []),
+          ...(esResponsable ? [{ reservas: { some: { espacio: { responsableId: usuario.id } } } }] : []),
+        ],
+      },
+      include: {
+        actas: { select: { id: true, tipo: true, consecutivo: true } },
+      },
+    });
+    if (!solicitud || (!esAdministrador && !esResponsable)) {
+      throw noEncontrado('La solicitud');
+    }
+
+    let destino: EstadoSolicitud;
+    try {
+      destino = validarTransicion(solicitud.estado, 'CERRAR');
+    } catch (error) {
+      if (!(error instanceof TransicionInvalida)) throw error;
+      throw new ErrorDominio(
+        'SOLICITUD_NO_CERRABLE',
+        'Solo se puede cerrar una solicitud en estado FINALIZADA.',
+        409,
+      );
+    }
+
+    const actaDevolucion = solicitud.actas.find((a) => a.tipo === 'DEVOLUCION');
+    if (!actaDevolucion) {
+      throw new ErrorDominio(
+        'ACTA_DEVOLUCION_REQUERIDA',
+        'Para cerrar la solicitud debe existir el acta de devolución registrada (RN-15).',
+        409,
+      );
+    }
+
+    const observacion = datos.observacion?.trim() || null;
+
+    await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.solicitud.updateMany({
+        where: { id, estado: solicitud.estado },
+        data: { estado: destino },
+      });
+      if (count === 0) {
+        throw new ErrorDominio(
+          'SOLICITUD_NO_CERRABLE',
+          'La solicitud cambió de estado mientras se cerraba.',
+          409,
+        );
+      }
+      await tx.historialEstadoSolicitud.create({
+        data: {
+          solicitudId: id,
+          estadoAnterior: solicitud.estado,
+          estadoNuevo: destino,
+          usuarioId: usuario.id,
+          observacion: observacion ?? actaDevolucion.consecutivo,
+        },
+      });
+      await tx.bitacora.create({
+        data: {
+          usuarioId: usuario.id,
+          accion: 'SOLICITUD_CERRADA',
+          entidad: 'Solicitud',
+          entidadId: id,
+          ip: contexto.ip,
+          userAgent: contexto.userAgent,
+          correlacionId: contexto.correlacionId,
+          datosDespues: {
+            actaDevolucion: actaDevolucion.consecutivo,
+            observacion,
+          },
+        },
+      });
+    });
+
+    await this.notificaciones.notificarSolicitante(id, {
+      titulo: `Solicitud ${solicitud.consecutivo ?? 'sin consecutivo'} cerrada`,
+      cuerpo: observacion
+        ? `Tu solicitud fue cerrada formalmente. Observación: ${observacion}`
+        : `Tu solicitud fue cerrada formalmente tras el acta de devolución ${actaDevolucion.consecutivo}.`,
+    });
+
+    return {
+      estadoSolicitud: destino,
+      actaDevolucion: actaDevolucion.consecutivo,
+      observacion,
+    };
   }
 }

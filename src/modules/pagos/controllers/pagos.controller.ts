@@ -157,7 +157,7 @@ export class PagosController {
   }
 
   @Get()
-  @Roles('TESORERIA', 'AUDITOR')
+  @Roles('TESORERIA', 'AUDITOR', 'ADMINISTRADOR')
   @ApiOperation({
     summary: 'Conciliación: lista las órdenes de pago.',
     description: 'Paginada, de la más reciente a la más antigua; filtra por estado.',

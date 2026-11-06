@@ -85,6 +85,36 @@ export class BloqueoCreadoDto {
   fin!: string;
 }
 
+export class BloqueoResumenDto {
+  @ApiProperty({ format: 'uuid', example: '5c1d8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b' })
+  id!: string;
+
+  @ApiProperty({ format: 'uuid', example: '8a3b8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b' })
+  espacioId!: string;
+
+  @ApiProperty({ example: 'MANTENIMIENTO', description: 'Motivo del bloqueo.' })
+  motivo!: string;
+
+  @ApiProperty({ type: String, nullable: true })
+  descripcion!: string | null;
+
+  @ApiProperty({ example: '2026-11-03T13:00:00.000Z' })
+  inicio!: string;
+
+  @ApiProperty({ example: '2026-11-03T15:00:00.000Z' })
+  fin!: string;
+
+  @ApiProperty({ type: String, nullable: true })
+  rrule!: string | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  repetirHasta!: string | null;
+
+  @ApiProperty({ example: 4 })
+  franjasActivas!: number;
+}
+
+
 export class CodigoNombreResultadoDto {
   @ApiProperty({ example: 'B' })
   codigo!: string;

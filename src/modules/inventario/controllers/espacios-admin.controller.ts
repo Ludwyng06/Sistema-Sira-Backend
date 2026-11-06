@@ -37,6 +37,7 @@ export class EspaciosAdminController {
   constructor(private readonly servicio: EspaciosAdminService) {}
 
   @Get('gestion')
+  @Roles('ADMINISTRADOR', 'AUDITOR')
   @ApiOperation({
     summary: 'Lista los espacios para administración, incluidos los ocultos del catálogo público.',
     description: 'Filtra por sede, bloque, estado y archivo; no excluye espacios por visibilidad pública.',
@@ -48,6 +49,7 @@ export class EspaciosAdminController {
   }
 
   @Get('gestion/:codigo')
+  @Roles('ADMINISTRADOR', 'AUDITOR')
   @ApiOperation({
     summary: 'Detalle administrativo de un espacio, aunque esté archivado o fuera de servicio.',
     description: 'El código se normaliza a mayúsculas. Errores: 404 NO_ENCONTRADO.',
@@ -106,11 +108,25 @@ export class EspaciosAdminController {
   }
 
   @Patch(':codigo/archivar')
+  @Auditar('ESPACIO_ARCHIVADO', 'Espacio')
   @HttpCode(204)
   @ApiOperation({ summary: 'Archiva un espacio (nunca se borra).' })
   @ApiNoContentResponse({ description: 'Espacio archivado.' })
   @ApiConflictResponse({ description: 'El espacio tiene reservas futuras.' })
   archivar(@Param('codigo') codigo: string): Promise<void> {
     return this.servicio.archivar(codigo);
+  }
+
+  @Patch(':codigo/restaurar')
+  @Auditar('ESPACIO_RESTAURADO', 'Espacio')
+  @HttpCode(204)
+  @ApiOperation({
+    summary: 'Restaura un espacio archivado (RF-INV-03).',
+    description: 'Es idempotente. Errores: 404 NO_ENCONTRADO; 422 SEDE_ARCHIVADA o BLOQUE_ARCHIVADO.',
+  })
+  @ApiNoContentResponse({ description: 'Espacio restaurado.' })
+  @ApiErrores(401, 403, 404, 422)
+  restaurar(@Param('codigo') codigo: string): Promise<void> {
+    return this.servicio.restaurar(codigo);
   }
 }

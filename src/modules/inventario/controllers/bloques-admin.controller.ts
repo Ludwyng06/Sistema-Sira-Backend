@@ -35,6 +35,7 @@ export class BloquesAdminController {
   constructor(private readonly servicio: BloquesAdminService) {}
 
   @Get()
+  @Roles('ADMINISTRADOR', 'AUDITOR')
   @ApiOperation({
     summary: 'Lista los bloques (activos y archivados).',
     description: 'Paginada. El listado público solo muestra los activos.',
@@ -46,6 +47,7 @@ export class BloquesAdminController {
   }
 
   @Get(':id')
+  @Roles('ADMINISTRADOR', 'AUDITOR')
   @ApiOperation({
     summary: 'Detalle del bloque.',
     description: 'Errores: 404 NO_ENCONTRADO.',

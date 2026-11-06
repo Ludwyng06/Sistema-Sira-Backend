@@ -287,3 +287,26 @@ export class FestivoDto {
   @ApiProperty({ example: 'Inmaculada Concepción' })
   nombre!: string;
 }
+
+// ---------------------------------------------------------------- SMMLV
+
+export class GuardarSmmlvDto {
+  @ApiProperty({ example: 1423500, minimum: 1, description: 'Valor del SMMLV en pesos enteros (RN-06, RF-TAR-06).' })
+  @Type(() => Number)
+  @IsInt({ message: 'valor debe ser un número entero de pesos.' })
+  @Min(1, { message: 'valor debe ser mayor que 0.' })
+  @Max(MAXIMO_VALOR_PESOS, { message: 'valor no puede superar 2000000000 pesos.' })
+  valor!: number;
+}
+
+export class SmmlvDto {
+  @ApiProperty({ example: 2026 })
+  anio!: number;
+
+  @ApiProperty({ example: 1423500 })
+  valor!: number;
+
+  @ApiPropertyOptional({ example: 4, description: 'Cantidad de tarifas indexadas a SMMLV recalculadas para ese año.' })
+  tarifasRecalculadas?: number;
+}
+

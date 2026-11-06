@@ -46,12 +46,16 @@ export function calcularDeposito(franjas: readonly FranjaCalculada[]): number {
 }
 
 /**
- * `subtotalServicios` es cantidad × tarifa de cada servicio, sin recargos ni IVA (el ítem del
- * servicio no guarda IVA). El depósito va aparte del total.
+ * `subtotalServicios` es cantidad × tarifa de cada servicio (sin recargos) e `ivaServicios` es el IVA
+ * calculado sobre los servicios gravados (RF-TAR-07). El depósito va aparte del total.
  */
-export function totalizarSolicitud(franjas: readonly FranjaCalculada[], subtotalServicios: number): Totales {
+export function totalizarSolicitud(
+  franjas: readonly FranjaCalculada[],
+  subtotalServicios: number,
+  ivaServicios: number = 0,
+): Totales {
   const subtotal = suma(franjas.map((f) => f.subtotal)) + subtotalServicios;
-  const iva = suma(franjas.map((f) => f.iva));
+  const iva = suma(franjas.map((f) => f.iva)) + ivaServicios;
   return {
     base: suma(franjas.map((f) => f.base)) + subtotalServicios,
     recargos: suma(franjas.map((f) => f.recargos)),
