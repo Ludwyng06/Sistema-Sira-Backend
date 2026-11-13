@@ -15,10 +15,10 @@ export class PasarelaController {
 
   @Post('ordenes/:id/pasarela')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Abre Web Checkout de Wompi sandbox para la orden propia pendiente.',
-    description: 'Sin cuerpo. Devuelve un enlace firmado, con retorno a FRONTEND_URL/pagos/retorno?orden=<id>, sin confirmar el pago. Solo el solicitante dueño. Errores: 404 NO_ENCONTRADO; 409 ORDEN_NO_PERMITIDA; 422 SOLICITUD_EXENTA; 503 PASARELA_DESACTIVADA o PASARELA_SIN_CONFIGURAR.' })
+  @ApiOperation({ summary: 'Abre Web Checkout de Wompi para la orden propia, con reintento tras rechazo.',
+    description: 'Sin cuerpo. Devuelve un enlace firmado, con retorno a FRONTEND_URL/pagos/retorno?orden=<id>, sin confirmar el pago. Solo el solicitante dueño; una orden rechazada o anulada vigente admite otro intento. Errores: 404 NO_ENCONTRADO; 409 SOLICITUD_EXENTA, ORDEN_NO_PERMITIDA o AMBIENTE_NO_COINCIDE; 503 PASARELA_DESACTIVADA o PASARELA_SIN_CONFIGURAR.' })
   @ApiCreatedResponse({ type: CheckoutPasarelaDto })
-  @ApiErrores(400, 401, 404, 409, 422, 503)
+  @ApiErrores(400, 401, 404, 409, 503)
   iniciar(
     @Param('id', new ParseUUIDPipe()) id: string,
     @UsuarioActual() usuario: UsuarioAutenticado,
@@ -44,7 +44,7 @@ export class PasarelaController {
   @HttpCode(200)
   @ApiBody({ schema: { type: 'object', required: ['event', 'environment', 'data', 'signature', 'timestamp'],
     properties: {
-      event: { type: 'string', enum: ['transaction.updated'] }, environment: { type: 'string', enum: ['test'] },
+      event: { type: 'string', enum: ['transaction.updated'] }, environment: { type: 'string', enum: ['test', 'prod'] },
       data: { type: 'object', additionalProperties: true },
       signature: { type: 'object', required: ['properties', 'checksum'], properties: {
         properties: { type: 'array', items: { type: 'string' } }, checksum: { type: 'string' },
@@ -52,7 +52,7 @@ export class PasarelaController {
     },
   } })
   @ApiOperation({ summary: 'Valida la firma del cuerpo crudo y registra el evento idempotente para procesarlo en segundo plano.',
-    description: 'Público, autenticado por firma Wompi. Acepta transaction.updated del ambiente test. Conserva el cuerpo original y devuelve 200 sin llamadas externas. Errores: 400 CUERPO_CRUDO_REQUERIDO; 401 FIRMA_WEBHOOK_INVALIDA; 422 EVENTO_INVALIDO.' })
+    description: 'Público, autenticado por firma Wompi. Acepta transaction.updated del WOMPI_AMBIENTE configurado. Conserva el cuerpo original y devuelve 200 sin llamadas externas. Errores: 400 CUERPO_CRUDO_REQUERIDO; 401 FIRMA_WEBHOOK_INVALIDA; 422 EVENTO_INVALIDO.' })
   @ApiOkResponse({ type: EventoRecibidoDto })
   @ApiErrores(400, 401, 422)
   recibir(

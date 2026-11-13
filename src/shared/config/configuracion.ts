@@ -22,6 +22,7 @@ export interface Configuracion {
   CORREO_REMITENTE: string;
   ALMACENAMIENTO_DIR: string;
   PASARELA_PROVEEDOR: 'wompi' | 'ninguna';
+  WOMPI_AMBIENTE: 'test' | 'prod';
   WOMPI_URL_API: string;
   WOMPI_LLAVE_PUBLICA: string;
   WOMPI_LLAVE_PRIVADA: string;
@@ -70,6 +71,9 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
   if (proveedor !== 'ninguna' && proveedor !== 'wompi') {
     throw new Error('PASARELA_PROVEEDOR debe ser wompi o ninguna.');
   }
+  const ambiente = texto('WOMPI_AMBIENTE', 'test').trim();
+  if (ambiente !== 'test' && ambiente !== 'prod') throw new Error('WOMPI_AMBIENTE debe ser test o prod.');
+  const urlWompi = ambiente === 'test' ? 'https://sandbox.wompi.co/v1' : 'https://production.wompi.co/v1';
 
   const configuracion: Configuracion = {
     NODE_ENV: texto('NODE_ENV', 'development'),
@@ -95,7 +99,8 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
     CORREO_REMITENTE: texto('CORREO_REMITENTE'),
     ALMACENAMIENTO_DIR: texto('ALMACENAMIENTO_DIR', './almacenamiento'),
     PASARELA_PROVEEDOR: proveedor,
-    WOMPI_URL_API: texto('WOMPI_URL_API', 'https://sandbox.wompi.co/v1').trim().replace(/\/$/, ''),
+    WOMPI_AMBIENTE: ambiente,
+    WOMPI_URL_API: (texto('WOMPI_URL_API').trim() || urlWompi).replace(/\/$/, ''),
     WOMPI_LLAVE_PUBLICA: texto('WOMPI_LLAVE_PUBLICA').trim(),
     WOMPI_LLAVE_PRIVADA: texto('WOMPI_LLAVE_PRIVADA').trim(),
     WOMPI_SECRETO_EVENTOS: texto('WOMPI_SECRETO_EVENTOS').trim(),
@@ -114,12 +119,12 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
     const llaves = ['WOMPI_LLAVE_PUBLICA', 'WOMPI_LLAVE_PRIVADA', 'WOMPI_SECRETO_EVENTOS', 'WOMPI_SECRETO_INTEGRIDAD'] as const;
     const ausentes = llaves.filter((clave) => !configuracion[clave]);
     if (ausentes.length) throw new Error(`Faltan variables de pasarela: ${ausentes.join(', ')}.`);
-    if (configuracion.WOMPI_URL_API !== 'https://sandbox.wompi.co/v1') {
-      throw new Error('WOMPI_URL_API debe apuntar a https://sandbox.wompi.co/v1.');
+    if (configuracion.WOMPI_URL_API !== urlWompi) {
+      throw new Error(`WOMPI_URL_API debe apuntar a ${urlWompi} para WOMPI_AMBIENTE=${ambiente}.`);
     }
-    if (!configuracion.WOMPI_LLAVE_PUBLICA.startsWith('pub_test_') ||
-        !configuracion.WOMPI_LLAVE_PRIVADA.startsWith('prv_test_')) {
-      throw new Error('Este adaptador requiere llaves Wompi de sandbox.');
+    if (!configuracion.WOMPI_LLAVE_PUBLICA.startsWith(`pub_${ambiente}_`) ||
+        !configuracion.WOMPI_LLAVE_PRIVADA.startsWith(`prv_${ambiente}_`)) {
+      throw new Error(`Las llaves Wompi deben corresponder al ambiente ${ambiente} (test=sandbox).`);
     }
   }
 

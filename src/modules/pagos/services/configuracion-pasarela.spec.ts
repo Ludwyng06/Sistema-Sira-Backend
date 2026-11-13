@@ -13,7 +13,7 @@ const wompi = {
 
 describe('Configuración de pasarela', () => {
   it('con ninguna no requiere credenciales y conserva valores predeterminados', () => {
-    expect(validarConfiguracion(base)).toMatchObject({ PASARELA_PROVEEDOR: 'ninguna',
+    expect(validarConfiguracion(base)).toMatchObject({ PASARELA_PROVEEDOR: 'ninguna', WOMPI_AMBIENTE: 'test',
       WOMPI_LLAVE_PUBLICA: '', WOMPI_SECRETO_EVENTOS: '',
       WOMPI_URL_API: 'https://sandbox.wompi.co/v1', PASARELA_CONSULTA_MINUTOS: 30, PASARELA_GRACIA_MINUTOS: 120 });
   });
@@ -27,6 +27,14 @@ describe('Configuración de pasarela', () => {
   it('rechaza llaves de producción y URL ajena al sandbox', () => {
     expect(() => validarConfiguracion({ ...base, ...wompi, WOMPI_LLAVE_PUBLICA: 'pub_prod_ejemplo' })).toThrow('sandbox');
     expect(() => validarConfiguracion({ ...base, ...wompi, WOMPI_URL_API: 'https://otro.example/v1' })).toThrow('WOMPI_URL_API');
+  });
+  it('prod deriva la URL de producción y acepta únicamente llaves del mismo ambiente', () => {
+    const produccion = { ...base, ...wompi, WOMPI_AMBIENTE: 'prod',
+      WOMPI_LLAVE_PUBLICA: 'pub_prod_ejemplo', WOMPI_LLAVE_PRIVADA: 'prv_prod_ejemplo' };
+    expect(validarConfiguracion(produccion)).toMatchObject({ WOMPI_AMBIENTE: 'prod', WOMPI_URL_API: 'https://production.wompi.co/v1' });
+    expect(() => validarConfiguracion({ ...produccion, WOMPI_URL_API: 'https://sandbox.wompi.co/v1' })).toThrow('WOMPI_URL_API');
+    expect(() => validarConfiguracion({ ...produccion, WOMPI_LLAVE_PRIVADA: 'prv_test_ejemplo' })).toThrow('ambiente prod');
+    expect(() => validarConfiguracion({ ...base, WOMPI_AMBIENTE: 'otro' })).toThrow('WOMPI_AMBIENTE');
   });
   it('rechaza proveedor desconocido y plazos fraccionarios o fuera de rango', () => {
     expect(() => validarConfiguracion({ ...base, PASARELA_PROVEEDOR: 'otro' })).toThrow('PASARELA_PROVEEDOR');

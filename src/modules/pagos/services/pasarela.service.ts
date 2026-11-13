@@ -10,6 +10,9 @@ import { WompiAdapter } from '../adaptadores/wompi.adapter.js';
 import type { CheckoutPasarelaDto, EstadoPagoDto, EventoRecibidoDto } from '../dto/pasarela.dto.js';
 import { PASARELA, type EventoInterpretado, type PasarelaPort } from '../puertos/pasarela.port.js';
 
+const ACCIONES_INTENTO = ['CHECKOUT_INICIADO', 'CHECKOUT_REINTENTADO'];
+const ESTADOS_REINTENTABLES: readonly string[] = ['RECHAZADA', 'ANULADA', 'ERROR'];
+
 @Injectable()
 export class PasarelaService {
   private readonly logger = new Logger(PasarelaService.name);
@@ -35,19 +38,16 @@ export class PasarelaService {
     const orden = await this.ordenPropia(id, usuario);
     if (!orden) throw noEncontrado('La orden de pago');
     if (orden.cotizacion.esExenta || orden.cotizacion.solicitud.esExenta) {
-      throw new ErrorDominio('SOLICITUD_EXENTA', 'Esta solicitud es exenta: no requiere pago.', 422);
+      throw new ErrorDominio('SOLICITUD_EXENTA', 'Esta solicitud es exenta: no requiere pago.', 409);
     }
-    if (orden.estado !== 'PENDIENTE' || orden.soporteUrl || orden.venceEn <= new Date() ||
+    if ((orden.estado !== 'PENDIENTE' && !ESTADOS_REINTENTABLES.includes(orden.estado)) ||
+        orden.soporteUrl || orden.venceEn <= new Date() || orden.valor <= 0 ||
         orden.cotizacion.solicitud.estado !== 'PAGO_PENDIENTE') {
-      throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'Solo puedes pagar una orden pendiente y vigente.', 409);
+      throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'Solo puedes pagar una orden pendiente o reintentable y vigente.', 409);
     }
     const retorno = new URL('/pagos/retorno', this.config.getOrThrow<string>('FRONTEND_URL'));
     retorno.searchParams.set('orden', id);
-    const checkout = await this.pasarela.crearTransaccion({
-      referencia: orden.referencia, valorPesos: orden.valor, moneda: 'COP',
-      correoPagador: usuario.correo, urlRetorno: retorno.toString(), descripcion: `Orden ${orden.referencia}`,
-    });
-    await this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx) => {
       // Misma guarda por solicitud que los casos de pago manual y vencimiento.
       const solicitud = await tx.solicitud.updateMany({
         where: { id: orden.cotizacion.solicitudId, estado: 'PAGO_PENDIENTE', esExenta: false },
@@ -55,14 +55,25 @@ export class PasarelaService {
       });
       if (!solicitud.count) throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'La solicitud cambió de estado.', 409);
       const actual = await tx.ordenPago.findUniqueOrThrow({ where: { id } });
-      if (actual.estado !== 'PENDIENTE' || actual.soporteUrl || actual.venceEn <= new Date()) {
+      const reintento = ESTADOS_REINTENTABLES.includes(actual.estado);
+      if ((actual.estado !== 'PENDIENTE' && !reintento) || actual.soporteUrl || actual.venceEn <= new Date() || actual.valor <= 0) {
         throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'La orden cambió de estado.', 409);
       }
+      const anterior = await this.ultimoIntento(tx, id, actual.referencia);
+      const numeroIntento = anterior.numero + (reintento ? 1 : 0);
+      const referenciaIntento = reintento ? `${actual.referencia}-${numeroIntento}` : anterior.referencia;
+      // Firma local: no se realiza ninguna llamada HTTP dentro de la transacción.
+      const checkout = await this.pasarela.crearTransaccion({
+        referencia: referenciaIntento, valorPesos: actual.valor, moneda: 'COP',
+        correoPagador: usuario.correo, urlRetorno: retorno.toString(), descripcion: `Orden ${actual.referencia}`,
+      });
       const primeraApertura = actual.pasarela === null;
+      const transaccionAnteriorId = actual.transaccionExternaId;
       const gracia = new Date(Math.max(actual.venceEn.getTime(), Date.now() + this.minutos('PASARELA_GRACIA_MINUTOS', 120) * 60_000));
       const cambio = await tx.ordenPago.updateMany({
-        where: { id, estado: 'PENDIENTE', soporteUrl: null, transaccionExternaId: actual.transaccionExternaId },
+        where: { id, estado: actual.estado, soporteUrl: null, transaccionExternaId: actual.transaccionExternaId },
         data: { medio: 'PASARELA', pasarela: this.pasarela.proveedor,
+          ...(reintento ? { estado: 'PENDIENTE' as const, transaccionExternaId: null, pagadoEn: null } : {}),
           ...(primeraApertura ? { venceEn: gracia } : {}) },
       });
       if (!cambio.count) throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'La orden cambió de estado.', 409);
@@ -74,11 +85,30 @@ export class PasarelaService {
         });
       }
       await tx.bitacora.create({ data: {
-        usuarioId: usuario.id, accion: 'CHECKOUT_INICIADO', entidad: 'OrdenPago', entidadId: id,
-        datosDespues: { proveedor: this.pasarela.proveedor, referencia: orden.referencia },
+        usuarioId: usuario.id, accion: reintento ? 'CHECKOUT_REINTENTADO' : 'CHECKOUT_INICIADO', entidad: 'OrdenPago', entidadId: id,
+        datosDespues: { proveedor: this.pasarela.proveedor, referencia: actual.referencia,
+          referenciaIntento, numeroIntento, ambiente: this.config.get<string>('WOMPI_AMBIENTE') || 'test',
+          transaccionAnteriorId: reintento ? transaccionAnteriorId : null },
       } });
+      return { ordenPagoId: id, urlCheckout: checkout.urlCheckout,
+        transaccionExternaId: reintento ? null : actual.transaccionExternaId };
     });
-    return { ordenPagoId: id, urlCheckout: checkout.urlCheckout, transaccionExternaId: orden.transaccionExternaId };
+  }
+
+  /** Bitácora inmutable como registro de intentos, serializado por el bloqueo de solicitud. */
+  private async ultimoIntento(cliente: Pick<Prisma.TransactionClient, 'bitacora'>, id: string, referencia: string) {
+    const fila = await cliente.bitacora.findFirst({
+      where: { entidad: 'OrdenPago', entidadId: id, accion: { in: ACCIONES_INTENTO } },
+      orderBy: { id: 'desc' }, select: { datosDespues: true },
+    });
+    const datos = fila?.datosDespues as Record<string, unknown> | null;
+    const numero = typeof datos?.numeroIntento === 'number' ? datos.numeroIntento : 1;
+    const ref = typeof datos?.referenciaIntento === 'string' ? datos.referenciaIntento : referencia;
+    const ambiente = typeof datos?.ambiente === 'string' ? datos.ambiente : 'test';
+    if (fila && ambiente !== (this.config.get<string>('WOMPI_AMBIENTE') || 'test')) {
+      throw new ErrorDominio('AMBIENTE_NO_COINCIDE', 'La orden pertenece a otro ambiente de pagos.', 409);
+    }
+    return { numero, referencia: ref };
   }
 
   async estado(id: string, usuario: UsuarioAutenticado): Promise<EstadoPagoDto> {
@@ -151,9 +181,19 @@ export class PasarelaService {
   async aplicar(evento: EventoInterpretado, eventoId?: string): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       // Orden de bloqueo: solicitud -> orden -> evento, como pagos y vencimientos existentes.
-      const candidata = await tx.ordenPago.findUnique({
+      let candidata = await tx.ordenPago.findUnique({
         where: { referencia: evento.referencia }, include: { cotizacion: true },
       });
+      if (!candidata) {
+        // Nunca se deduce la orden quitando sufijos: solo se acepta una referencia guardada.
+        const intento = await tx.bitacora.findFirst({ where: {
+          entidad: 'OrdenPago', accion: { in: ACCIONES_INTENTO },
+          datosDespues: { path: ['referenciaIntento'], equals: evento.referencia },
+        }, orderBy: { id: 'desc' }, select: { entidadId: true } });
+        if (intento?.entidadId) candidata = await tx.ordenPago.findUnique({
+          where: { id: intento.entidadId }, include: { cotizacion: true },
+        });
+      }
       if (!candidata || candidata.pasarela !== 'WOMPI' || candidata.medio !== 'PASARELA') {
         throw noEncontrado('La orden de pago');
       }
@@ -169,15 +209,22 @@ export class PasarelaService {
         });
         if (!reclamo.count) return;
       }
+      const vigente = await this.ultimoIntento(tx, orden.id, orden.referencia);
+      // El reclamo anterior conserva el evento y su vínculo; ningún intento viejo modifica el actual.
+      if (orden.estado === 'APROBADA' || vigente.referencia !== evento.referencia ||
+          (orden.transaccionExternaId && orden.transaccionExternaId !== evento.transaccionExternaId)) {
+        await tx.bitacora.create({ data: { accion: 'EVENTO_PASARELA_IGNORADO', entidad: 'OrdenPago', entidadId: orden.id,
+          datosDespues: { referenciaIntento: evento.referencia, referenciaVigente: vigente.referencia,
+            transaccionExternaId: evento.transaccionExternaId, estadoOrden: orden.estado },
+        } });
+        return;
+      }
       if (orden.valor !== evento.valorPesos) throw new ErrorDominio('VALOR_NO_COINCIDE', 'El valor no coincide con la orden.', 422);
       if (orden.cotizacion.esExenta || orden.cotizacion.solicitud.esExenta) {
         throw new ErrorDominio('SOLICITUD_EXENTA', 'Esta solicitud es exenta: no requiere pago.', 422);
       }
-      if (orden.transaccionExternaId && orden.transaccionExternaId !== evento.transaccionExternaId) {
-        throw new ErrorDominio('TRANSACCION_NO_COINCIDE', 'La transacción no coincide con la orden.', 422);
-      }
       // Un evento antiguo o una consulta concurrente nunca revierte un pago ni repite efectos.
-      if (orden.estado === 'APROBADA' || orden.estado === 'RECHAZADA' || orden.estado === 'ANULADA') return;
+      if (orden.estado === 'RECHAZADA' || orden.estado === 'ANULADA') return;
       const estado = evento.estado === 'ERROR' ? 'RECHAZADA' : evento.estado;
       await tx.ordenPago.update({ where: { id: orden.id }, data: {
         transaccionExternaId: evento.transaccionExternaId,
@@ -265,13 +312,17 @@ export class PasarelaService {
     this.conciliando = true;
     try {
       const ordenes = await this.prisma.ordenPago.findMany({ where: {
-        pasarela: 'WOMPI', medio: 'PASARELA', estado: 'PENDIENTE', transaccionExternaId: { not: null },
+        pasarela: 'WOMPI', medio: 'PASARELA', estado: 'PENDIENTE',
         actualizadaEn: { lte: new Date(Date.now() - this.minutos('PASARELA_CONSULTA_MINUTOS', 30) * 60_000) },
       }, orderBy: { actualizadaEn: 'asc' }, take: 100 });
       for (const orden of ordenes) {
         try {
-          const evento = await this.wompi.consultarTransaccion(orden.transaccionExternaId!);
-          if (evento.referencia !== orden.referencia) throw new Error('Referencia distinta a la consultada.');
+          const intento = await this.ultimoIntento(this.prisma, orden.id, orden.referencia);
+          const evento = orden.transaccionExternaId
+            ? await this.wompi.consultarTransaccion(orden.transaccionExternaId)
+            : await this.wompi.consultarPorReferencia(intento.referencia);
+          if (!evento) continue;
+          if (evento.referencia !== intento.referencia) throw new Error('Referencia distinta a la consultada.');
           await this.aplicar(evento);
         } catch { this.logger.warn(`No se pudo conciliar la orden ${orden.id}.`); }
       }

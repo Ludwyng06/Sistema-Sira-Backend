@@ -14,7 +14,7 @@ export class DiscoLocalAdapter implements AlmacenamientoPort {
 
   private async ruta(clave: string, crear: boolean): Promise<string> {
     // Rechaza también sintaxis Windows aunque se ejecute en Linux.
-    if (!clave || isAbsolute(clave) || /[\\:\x00]/.test(clave) ||
+    if (!clave || isAbsolute(clave) || clave.includes('\u0000') || /[\\:]/.test(clave) ||
         clave.split('/').some((parte) => !parte || parte === '.' || parte === '..' || /[. ]$/.test(parte) ||
           /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(parte))) {
       throw new Error('Clave de almacenamiento inválida.');

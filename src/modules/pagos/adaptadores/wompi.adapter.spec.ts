@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WompiAdapter } from './wompi.adapter.js';
 
-const configuracion = () => new ConfigService({
+const configuracion = (ambiente: 'test' | 'prod' = 'test') => new ConfigService({
+  WOMPI_AMBIENTE: ambiente,
+  WOMPI_URL_API: ambiente === 'test' ? 'https://sandbox.wompi.co/v1' : 'https://production.wompi.co/v1',
   WOMPI_LLAVE_PUBLICA: 'pub_test_ejemplo', WOMPI_LLAVE_PRIVADA: 'prv_test_ejemplo',
   WOMPI_SECRETO_INTEGRIDAD: 'prod_integrity_Z5mMke9x0k8gpErbDqwrJXMqsI6SFli6',
   WOMPI_SECRETO_EVENTOS: 'secreto_de_prueba',
@@ -89,6 +91,44 @@ describe('WompiAdapter', () => {
     expect(await new WompiAdapter(configuracion()).consultarEstado('wompi-1')).toBe('APROBADA');
     expect(fetchSimulado).toHaveBeenCalledWith('https://sandbox.wompi.co/v1/transactions/wompi-1',
       expect.objectContaining({ headers: { Authorization: 'Bearer prv_test_ejemplo' }, redirect: 'error' }));
+  });
+
+  it('busca sin ID por referencia exacta y usa llave privada', async () => {
+    const transaccion = eventoFirmado().data.transaction;
+    const fetchSimulado = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [
+      { ...transaccion, reference: `${transaccion.reference}-otra` }, transaccion,
+    ] }) });
+    vi.stubGlobal('fetch', fetchSimulado);
+    const resultado = await new WompiAdapter(configuracion()).consultarPorReferencia(transaccion.reference);
+    expect(resultado).toMatchObject({ referencia: transaccion.reference, estado: 'APROBADA', valorPesos: 350000 });
+    expect(fetchSimulado).toHaveBeenCalledWith(`https://sandbox.wompi.co/v1/transactions?reference=${transaccion.reference}`,
+      expect.objectContaining({ headers: { Authorization: 'Bearer prv_test_ejemplo' } }));
+  });
+
+  it('una búsqueda vacía o sin referencia exactamente igual no inventa transacción', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [eventoFirmado().data.transaction] }) }));
+    await expect(new WompiAdapter(configuracion()).consultarPorReferencia('inexistente')).resolves.toBeNull();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) }));
+    await expect(new WompiAdapter(configuracion()).consultarPorReferencia('inexistente')).resolves.toBeNull();
+  });
+
+  it('no elige arbitrariamente entre varias transacciones de la misma referencia', async () => {
+    const transaccion = eventoFirmado().data.transaction;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [transaccion, { ...transaccion, id: 'otro-id' }] }) }));
+    await expect(new WompiAdapter(configuracion()).consultarPorReferencia(transaccion.reference)).rejects.toThrow('ambigua');
+  });
+
+  it('prod selecciona production y exige environment prod para eventos', async () => {
+    const adaptador = new WompiAdapter(configuracion('prod'));
+    const evento = eventoFirmado();
+    expect(adaptador.verificarFirmaWebhook(JSON.stringify(evento), {})).toBe(false);
+    evento.environment = 'prod';
+    expect(adaptador.verificarFirmaWebhook(JSON.stringify(evento), {})).toBe(true);
+    expect(adaptador.interpretarEvento(evento).estado).toBe('APROBADA');
+    const fetchSimulado = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: evento.data.transaction }) });
+    vi.stubGlobal('fetch', fetchSimulado);
+    await adaptador.consultarTransaccion('wompi-1');
+    expect(fetchSimulado).toHaveBeenCalledWith('https://production.wompi.co/v1/transactions/wompi-1', expect.any(Object));
   });
 
   it('no acepta eventos de producción ni estados o moneda desconocidos', () => {

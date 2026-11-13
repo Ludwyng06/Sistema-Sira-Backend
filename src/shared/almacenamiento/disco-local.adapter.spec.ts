@@ -23,7 +23,7 @@ describe('DiscoLocalAdapter', () => {
     expect(await adaptador.leer('solicitudes/uuid/soporte.pdf')).toBeNull();
   });
 
-  it.each(['../fuera', '/absoluta', 'a/../../fuera', 'C:/fuera', 'a\\..\\fuera', 'a//b', '', 'a/.. /fuera', 'CON', 'a/nul.txt'])
+  it.each(['../fuera', '/absoluta', 'a/../../fuera', 'C:/fuera', 'a\\..\\fuera', 'a//b', '', 'a/.. /fuera', 'CON', 'a/nul.txt', 'a\u0000b'])
     ('rechaza la clave peligrosa %j para todas las operaciones', async (clave) => {
       const adaptador = await entorno();
       await expect(adaptador.guardar(clave, Buffer.from('x'), 'text/plain')).rejects.toThrow();
