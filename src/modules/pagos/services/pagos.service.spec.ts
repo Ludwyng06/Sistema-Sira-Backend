@@ -123,6 +123,27 @@ describe('PagosService', () => {
   });
   afterEach(() => vi.useRealTimers());
 
+  describe('orden de servicio', () => {
+    it('solo ENTIDAD dueña puede registrar PDF y queda EN_VERIFICACION con medio diferido', async () => {
+      const e = crearEntorno({ perfil: { id: 'sol-1', tipo: 'ENTIDAD' } });
+      e.prisma.ordenPago.findFirst.mockResolvedValueOnce(null).mockResolvedValue(orden());
+      e.tx.ordenPago.findUniqueOrThrow.mockResolvedValue(orden({ medio: 'ORDEN_SERVICIO', estado: 'EN_VERIFICACION', soporteUrl: 'pagos/x.pdf' }));
+      const r = await e.servicio.crearOrdenServicio(SOLICITUD_ID, ' OS-123 ', { size: PDF.length, buffer: PDF }, usuario(), CONTEXTO);
+      expect(r).toMatchObject({ medio: 'ORDEN_SERVICIO', estado: 'EN_VERIFICACION', numeroOrdenServicio: 'OS-123' });
+      expect(e.tx.ordenPago.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ medio: 'ORDEN_SERVICIO', estado: 'EN_VERIFICACION' }) }));
+      expect(e.tx.bitacora.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ accion: 'ORDEN_SERVICIO_CARGADA', datosDespues: expect.objectContaining({ numeroOrdenServicio: 'OS-123' }) }) }));
+    });
+    it('rechaza otros perfiles, exentas y PDF inválido sin crear pago', async () => {
+      const natural = crearEntorno({ perfil: { id: 'sol-1', tipo: 'PERSONA_NATURAL' } });
+      await expect(natural.servicio.crearOrdenServicio(SOLICITUD_ID, 'OS-1', { size: PDF.length, buffer: PDF }, usuario(), CONTEXTO)).rejects.toMatchObject({ status: 403 });
+      const exenta = crearEntorno({ perfil: { id: 'sol-1', tipo: 'ENTIDAD' }, solicitud: solicitud({ esExenta: true }) });
+      await expect(exenta.servicio.crearOrdenServicio(SOLICITUD_ID, 'OS-1', { size: PDF.length, buffer: PDF }, usuario(), CONTEXTO)).rejects.toMatchObject({ codigo: 'SOLICITUD_EXENTA' });
+      const invalida = crearEntorno({ perfil: { id: 'sol-1', tipo: 'ENTIDAD' } });
+      await expect(invalida.servicio.crearOrdenServicio(SOLICITUD_ID, 'OS-1', { size: 3, buffer: Buffer.from('jpg') }, usuario(), CONTEXTO)).rejects.toMatchObject({ status: 422 });
+      expect(invalida.prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
   describe('crearOrden', () => {
     it('crea la orden OP- por cotización más depósito, deja PAGO_PENDIENTE y devuelve la cuenta', async () => {
       const e = crearEntorno();
@@ -349,6 +370,12 @@ describe('PagosService', () => {
       expect(e.tx.bitacora.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ accion: 'PAGO_APROBADO', usuarioId: 'u-tes', correlacionId: 'corr-1' }),
       });
+    });
+
+    it('la verificación de orden de servicio reutiliza la confirmación normal', async () => {
+      const e = crearEntorno(); e.prisma.ordenPago.findUnique.mockResolvedValue(enVerificacion({ medio: 'ORDEN_SERVICIO' }));
+      await expect(e.servicio.verificar(ORDEN_ID, { resultado: 'APROBADA' }, tesoreria, CONTEXTO)).resolves.toEqual({ estadoOrden: 'APROBADA', estadoSolicitud: 'CONFIRMADA' });
+      expect(e.tx.franjaOcupada.updateMany).toHaveBeenCalledTimes(1);
     });
 
     it('avisa al solicitante del resultado de la verificación', async () => {

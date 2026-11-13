@@ -208,6 +208,7 @@ export class PagosService {
     archivo: SoporteSubido | undefined,
     usuario: UsuarioAutenticado,
     contexto: ContextoPago,
+    numeroOrdenServicio?: string,
   ): Promise<OrdenPagoDto> {
     const orden = await this.ordenPropia(ordenId, usuario);
     if (orden.medio === MedioPago.PASARELA) {
@@ -233,6 +234,9 @@ export class PagosService {
     if (!tipoMime) {
       throw new ErrorDominio('ARCHIVO_NO_PERMITIDO', 'Solo se aceptan archivos PDF, PNG o JPG.', 422);
     }
+    if ((numeroOrdenServicio || orden.medio === MedioPago.ORDEN_SERVICIO) && tipoMime !== 'application/pdf') {
+      throw new ErrorDominio('ARCHIVO_NO_PERMITIDO', 'La orden de servicio debe ser un archivo PDF.', 422);
+    }
 
     const clave = `pagos/${orden.id}/${randomUUID()}.${EXTENSION_POR_TIPO[tipoMime]}`;
     await this.almacenamiento.guardar(clave, archivo.buffer, tipoMime);
@@ -241,7 +245,8 @@ export class PagosService {
         // Guarda: si tesorería o el vencimiento ya resolvieron la orden, el soporte no la revierte.
         const { count } = await tx.ordenPago.updateMany({
           where: { id: orden.id, estado: EstadoOrdenPago.PENDIENTE, medio: { not: MedioPago.PASARELA } },
-          data: { soporteUrl: clave, estado: EstadoOrdenPago.EN_VERIFICACION },
+          data: { soporteUrl: clave, estado: EstadoOrdenPago.EN_VERIFICACION,
+            ...(numeroOrdenServicio ? { medio: MedioPago.ORDEN_SERVICIO } : {}) },
         });
         if (count === 0) {
           throw new ErrorDominio(
@@ -254,13 +259,13 @@ export class PagosService {
         await tx.bitacora.create({
           data: {
             usuarioId: usuario.id,
-            accion: 'SOPORTE_PAGO_CARGADO',
+            accion: numeroOrdenServicio ? 'ORDEN_SERVICIO_CARGADA' : 'SOPORTE_PAGO_CARGADO',
             entidad: 'OrdenPago',
             entidadId: orden.id,
             ip: contexto.ip,
             userAgent: contexto.userAgent,
             correlacionId: contexto.correlacionId,
-            datosDespues: { referencia: orden.referencia },
+            datosDespues: { referencia: orden.referencia, ...(numeroOrdenServicio ? { numeroOrdenServicio } : {}) },
           },
         });
         return fila;
@@ -270,6 +275,26 @@ export class PagosService {
       await this.almacenamiento.eliminar(clave);
       throw error;
     }
+  }
+
+  /** RF-PAG-08: el medio diferido conserva el mismo proceso de verificación de soportes. */
+  async crearOrdenServicio(solicitudId: string, numero: string, archivo: SoporteSubido | undefined,
+    usuario: UsuarioAutenticado, contexto: ContextoPago): Promise<OrdenPagoDto & { numeroOrdenServicio: string }> {
+    const perfil = await this.prisma.solicitante.findUnique({ where: { usuarioId: usuario.id }, select: { id: true, tipo: true } });
+    const solicitud = perfil ? await this.prisma.solicitud.findFirst({ where: { id: solicitudId, solicitanteId: perfil.id }, select: { esExenta: true } }) : null;
+    if (!solicitud) throw noEncontrado('La solicitud');
+    if (solicitud.esExenta) throw new ErrorDominio('SOLICITUD_EXENTA', 'Una solicitud exenta no admite orden de servicio.', 409);
+    if (perfil?.tipo !== 'ENTIDAD') throw new ErrorDominio('ORDEN_SERVICIO_NO_PERMITIDA', 'Solo una entidad pública puede pagar contra orden de servicio.', 403);
+    const numeroOrdenServicio = typeof numero === 'string' ? numero.trim() : '';
+    if (!numeroOrdenServicio || numeroOrdenServicio.length > 120 || [...numeroOrdenServicio].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)) {
+      throw new ErrorDominio('NUMERO_ORDEN_INVALIDO', 'Indica un número de orden de servicio válido de hasta 120 caracteres.', 422);
+    }
+    if (!archivo || !archivo.buffer.length || archivo.buffer.length > TAMANO_MAXIMO_SOPORTE || detectarTipoMime(archivo.buffer) !== 'application/pdf') {
+      throw new ErrorDominio('ARCHIVO_NO_PERMITIDO', 'Adjunta una orden de servicio PDF de máximo 10 MB.', 422);
+    }
+    const orden = await this.crearOrden(solicitudId, usuario, contexto);
+    const resultado = await this.cargarSoporte(orden.id, archivo, usuario, contexto, numeroOrdenServicio);
+    return { ...resultado, numeroOrdenServicio };
   }
 
   /** UC-03 paso 3: tesorería aprueba o rechaza. Aprobar confirma la solicitud y sus franjas (RN-11). */
@@ -386,7 +411,7 @@ export class PagosService {
         ? `Pago confirmado de la solicitud ${etiqueta}`
         : `Pago rechazado de la solicitud ${etiqueta}`,
       cuerpo: aprobada
-        ? `Verificamos la consignación de la orden ${orden.referencia}. Tu horario quedó confirmado.`
+        ? `Verificamos el documento de pago de la orden ${orden.referencia}. Tu horario quedó confirmado.`
         : `No pudimos verificar la orden ${orden.referencia}. Motivo: ${observacion}. Genera una nueva orden.`,
     });
     return resultado;

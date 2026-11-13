@@ -1,5 +1,13 @@
 # pagos
 
+## Orden de servicio RF-PAG-08 (fase 3)
+
+`POST /api/pagos/ordenes/orden-servicio` requiere Bearer del solicitante dueño, perfil real `ENTIDAD` y solicitud no exenta. Cuerpo multipart: `solicitudId` UUID, `numeroOrdenServicio` texto no vacío de máximo 120 caracteres, `archivo` PDF por contenido de máximo 10 MB. Responde 201 con la misma OrdenPago del POST habitual (`id,referencia,valor,medio,estado,venceEn,tieneSoporte,observacionTesoreria,pagadoEn,cuentaRecaudo`) más `numeroOrdenServicio`; `medio=ORDEN_SERVICIO`, `estado=EN_VERIFICACION`, `tieneSoporte=true`. El número se conserva en la bitácora inmutable vinculada a la orden, sin otra migración. La respuesta hereda cuentaRecaudo del contrato de orden, pero esta modalidad usa su documento diferido.
+
+Tesorería usa exactamente `POST /api/pagos/ordenes/:id/verificacion` JSON `{resultado: APROBADA|RECHAZADA,observacion?:string}`; rechazo exige observación y aprobación confirma solicitud y franjas como consignación. El soporte se descarga por la ruta existente `/api/pagos/ordenes/:id/soporte`. Una orden de pasarela no puede convertirse mediante carga de PDF.
+
+Errores: 400 validación, 401 sin sesión, 403 ORDEN_SERVICIO_NO_PERMITIDA para otros perfiles, 404 solicitud ajena/inexistente, 409 SOLICITUD_EXENTA/ORDEN_NO_PERMITIDA/COTIZACION_VENCIDA, 422 NUMERO_ORDEN_INVALIDO/ARCHIVO_NO_PERMITIDO; 413 sobre 10 MB. Pruebas de ENTIDAD, PDF, exentas y verificación compartida añadidas; ejecución: **no verificado**.
+
 ## Conciliación RF-PAG-12 (fase 2)
 
 Acceso exclusivo TESORERIA y ADMINISTRADOR. `GET /api/pagos/conciliacion?fecha=YYYY-MM-DD` devuelve exactamente `{fecha,generadoEn,totales:{aprobadas:{cantidad,valor},rechazadas:{cantidad,valor},pendientes:{cantidad,valor},anuladas:{cantidad,valor}},porProveedor:[{proveedor,aprobadas:{cantidad,valor},rechazadas:{cantidad,valor},pendientes:{cantidad,valor}}],filas:[{ordenId,referencia,proveedor,medio,estado,valor,transaccionExternaId,pagadoEn}],diferencias:[{referencia,tipo,valorSistema,valorExtracto,detalle}]}`. Proveedor, transacción y fecha de pago pueden ser null; en diferencias referencia y ambos valores pueden ser null. `tipo` es VALOR|SIN_ORDEN|SIN_EXTRACTO|ESTADO; medio es PASARELA|CONSIGNACION|ORDEN_SERVICIO; todos los valores son pesos enteros.

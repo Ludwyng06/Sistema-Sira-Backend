@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
+import { IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 import { EstadoOrdenPago, EstadoReembolso, MedioPago } from '../../../generated/prisma/enums.js';
 
 export class CrearOrdenPagoDto {
@@ -16,6 +16,12 @@ export class SubirSoporteDto {
     description: 'Comprobante de consignación en PDF, PNG o JPG de máximo 10 MB (campo multipart «archivo»).',
   })
   archivo!: unknown;
+}
+
+export class CrearOrdenServicioDto extends CrearOrdenPagoDto {
+  @ApiProperty({ maxLength: 120, example: 'OS-2026-00123' })
+  @IsString() @IsNotEmpty() @MaxLength(120) numeroOrdenServicio!: string;
+  @ApiProperty({ type: 'string', format: 'binary', description: 'Orden de servicio en PDF de máximo 10 MB.' }) archivo!: unknown;
 }
 
 export const RESULTADOS_VERIFICACION = ['APROBADA', 'RECHAZADA'] as const;
@@ -106,6 +112,11 @@ export class OrdenPagoDto {
 
   @ApiProperty({ type: CuentaRecaudoDto, description: 'Cuenta donde se consigna.' })
   cuentaRecaudo!: CuentaRecaudoDto;
+}
+
+export class OrdenServicioRespuestaDto extends OrdenPagoDto {
+  @ApiProperty({ example: 'OS-2026-00123', description: 'Número preservado en la bitácora de carga de la orden de servicio.' })
+  numeroOrdenServicio!: string;
 }
 
 export class OrdenPagoResumenDto {

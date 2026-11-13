@@ -28,6 +28,8 @@ import { Roles, UsuarioActual, type UsuarioAutenticado } from '../../../shared/a
 import { ApiErrores } from '../../../shared/errores/api-errores.js';
 import {
   CrearOrdenPagoDto,
+  CrearOrdenServicioDto,
+  OrdenServicioRespuestaDto,
   FiltrosOrdenesDto,
   OrdenPagoDto,
   PagoTardioDto,
@@ -68,6 +70,20 @@ export class PagosController {
       userAgent: userAgent ?? null,
       correlacionId: correlacionId ?? null,
     });
+  }
+
+  @Post('orden-servicio')
+  @UseInterceptors(FileInterceptor('archivo', { limits: { fileSize: TAMANO_MAXIMO_SOPORTE, files: 1 } }))
+  @ApiConsumes('multipart/form-data') @ApiBody({ type: CrearOrdenServicioDto })
+  @ApiCreatedResponse({ type: OrdenServicioRespuestaDto })
+  @ApiOperation({ summary: 'Registra pago diferido contra orden de servicio de una entidad pública.',
+    description: 'Solo solicitante ENTIDAD dueño de la solicitud. PDF de máximo 10 MB; número conservado en bitácora. Queda EN_VERIFICACION para el mismo flujo de tesorería. Errores: 403 ORDEN_SERVICIO_NO_PERMITIDA; 404 NO_ENCONTRADO; 409 SOLICITUD_EXENTA u ORDEN_NO_PERMITIDA; 422 NUMERO_ORDEN_INVALIDO o ARCHIVO_NO_PERMITIDO.' })
+  @ApiErrores(400, 401, 403, 404, 409, 422)
+  crearOrdenServicio(@Body() datos: CrearOrdenServicioDto, @UploadedFile() archivo: SoporteSubido | undefined,
+    @UsuarioActual() usuario: UsuarioAutenticado, @Ip() ip: string,
+    @Headers('user-agent') userAgent: string | undefined, @Headers('x-correlation-id') correlacionId: string | undefined): Promise<OrdenServicioRespuestaDto> {
+    return this.servicio.crearOrdenServicio(datos.solicitudId, datos.numeroOrdenServicio, archivo, usuario,
+      { ip, userAgent: userAgent ?? null, correlacionId: correlacionId ?? null });
   }
 
   @Post(':id/soporte')
