@@ -12,6 +12,10 @@ const wompi = {
 };
 
 describe('Configuración de pasarela', () => {
+  it('rechaza el simulador al arrancar en producción', () => {
+    expect(() => validarConfiguracion({ ...base, NODE_ENV: 'production', PASARELA_PROVEEDOR: 'simulador',
+      SIMULADOR_SECRETO: 'secreto-de-prueba-01234567890123456789' })).toThrow('prohibido');
+  });
   it('exige solo las credenciales del proveedor activo y conserva las demás', () => {
     const epayco = { PASARELA_PROVEEDOR: 'epayco', EPAYCO_P_CUST_ID_CLIENTE: 'cliente', EPAYCO_P_KEY: 'firma-ejemplo',
       EPAYCO_LLAVE_PUBLICA: 'publica-ejemplo', EPAYCO_LLAVE_PRIVADA: 'privada-ejemplo',

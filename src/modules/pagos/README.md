@@ -1,5 +1,13 @@
 # pagos
 
+## Simulador local (fase 1)
+
+Activar `PASARELA_PROVEEDOR=simulador`, secreto propio `SIMULADOR_SECRETO` de al menos 32 caracteres y `SIMULADOR_URL_API=http://127.0.0.1:3001/api` (URL local de este mismo proceso). El arranque rechaza esta selección con `NODE_ENV=production`; también se bloquean los métodos del adaptador en producción aunque no sea el proveedor activo.
+
+`POST /api/pagos/ordenes/:id/pasarela` conserva su contrato y devuelve el enlace a `GET /api/pagos/checkout/simulador?token=...`. Esa página permite Aprobar/Rechazar/Dejar pendiente; `POST` a la misma ruta recibe formulario `{token,estado: APROBADA|RECHAZADA|PENDIENTE}`, guarda el estado del proveedor simulado, emite por HTTP un evento HMAC-SHA256 al webhook real `/api/pagos/webhooks/simulador` y responde 303 al retorno firmado. El estado de la orden solo lo cambia el procesador compartido de webhooks/consulta activa. El simulador mantiene sus operaciones en la bitácora inmutable, con bloqueo por operación, y permite consultas por ID y referencia; un estado final no cambia a otro. Reenviar la misma elección repite la misma identidad de evento para comprobar idempotencia.
+
+La prueba `test/pagos-simulador.e2e-spec.ts` usa la aplicación, base de datos y webhook HTTP reales, con una solicitud inicialmente cotizada; cubre aprobación, rechazo/reintento, duplicados y exentas. Pruebas, build, lint y ejecución e2e: **no verificado**; no fueron ejecutados por el constructor.
+
 órdenes, consignación, puerto de pasarela, webhooks
 
 Estado: consignación y Wompi aprobados por el orquestador; generalización multiproveedor y ePayco pendientes de su revisión y ejecución.

@@ -12,14 +12,16 @@ import { EpaycoAdapter } from './adaptadores/epayco.adapter.js';
 import { BoldAdapter } from './adaptadores/bold.adapter.js';
 import { EcollectAdapter } from './adaptadores/ecollect.adapter.js';
 import { EpaycoCheckoutController } from './controllers/epayco-checkout.controller.js';
+import { SimuladorAdapter } from './adaptadores/simulador.adapter.js';
+import { SimuladorCheckoutController } from './controllers/simulador-checkout.controller.js';
 import { PASARELA, PASARELAS, type PasarelaPort, type RegistroPasarelas } from './puertos/pasarela.port.js';
 
 @Module({
   imports: [NotificacionesModule],
-  controllers: [PagosController, ReembolsosController, PasarelaController, EpaycoCheckoutController],
-  providers: [PagosService, PasarelaService, WompiAdapter, EpaycoAdapter, BoldAdapter, EcollectAdapter, {
+  controllers: [PagosController, ReembolsosController, PasarelaController, EpaycoCheckoutController, SimuladorCheckoutController],
+  providers: [PagosService, PasarelaService, WompiAdapter, EpaycoAdapter, BoldAdapter, EcollectAdapter, SimuladorAdapter, {
     provide: PASARELAS,
-    inject: [WompiAdapter, EpaycoAdapter, BoldAdapter, EcollectAdapter],
+    inject: [WompiAdapter, EpaycoAdapter, BoldAdapter, EcollectAdapter, SimuladorAdapter],
     useFactory: (...adaptadores: PasarelaPort[]): RegistroPasarelas =>
       new Map<string, PasarelaPort>(adaptadores.map((adaptador): [string, PasarelaPort] => [adaptador.proveedor, adaptador])),
   }, {

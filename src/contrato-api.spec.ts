@@ -91,6 +91,8 @@ describe('Contrato de la API completa (Swagger)', () => {
       'POST /api/pagos/webhooks/wompi',
       'POST /api/pagos/webhooks/{proveedor}',
       'GET /api/pagos/checkout/epayco',
+      'GET /api/pagos/checkout/simulador',
+      'POST /api/pagos/checkout/simulador',
       'GET /api/pagos/ordenes/{id}/estado',
       'POST /api/actas',
       'GET /api/notificaciones',
@@ -228,6 +230,8 @@ describe('Contrato de la API completa (Swagger)', () => {
       'POST /api/pagos/webhooks/wompi',
       'POST /api/pagos/webhooks/{proveedor}',
       'GET /api/pagos/checkout/epayco',
+      'GET /api/pagos/checkout/simulador',
+      'POST /api/pagos/checkout/simulador',
     ].sort(),
     );
   });

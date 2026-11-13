@@ -69,7 +69,7 @@ export class PasarelaController {
   @ApiConsumes('application/json', 'application/x-www-form-urlencoded')
   @ApiBody({ schema: { type: 'object', additionalProperties: true } })
   @ApiOperation({ summary: 'Recibe el webhook firmado de una pasarela registrada.',
-    description: 'Proveedores: wompi, epayco, bold o ecollect. Valida con el adaptador solicitado y verifica el proveedor de la orden antes de aplicar el evento. Acepta JSON o formulario ePayco; conserva cuerpo crudo. Errores: 400 CUERPO_CRUDO_REQUERIDO; 401 FIRMA_WEBHOOK_INVALIDA; 404 NO_ENCONTRADO; 422 EVENTO_INVALIDO.' })
+    description: 'Proveedores: wompi, epayco, bold, ecollect o simulador (solo desarrollo). Valida con el adaptador solicitado y verifica el proveedor de la orden antes de aplicar el evento. Acepta JSON o formulario ePayco; conserva cuerpo crudo. Errores: 400 CUERPO_CRUDO_REQUERIDO; 401 FIRMA_WEBHOOK_INVALIDA; 404 NO_ENCONTRADO; 422 EVENTO_INVALIDO.' })
   @ApiOkResponse({ type: EventoRecibidoDto })
   @ApiErrores(400, 401, 404, 422)
   recibirProveedor(@Param('proveedor') proveedor: string, @Req() peticion: RawBodyRequest<Request>): Promise<EventoRecibidoDto> {

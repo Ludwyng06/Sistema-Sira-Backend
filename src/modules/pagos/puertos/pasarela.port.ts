@@ -11,7 +11,7 @@
  */
 
 export type EstadoTransaccion = 'APROBADA' | 'RECHAZADA' | 'PENDIENTE' | 'ANULADA' | 'ERROR';
-export type ProveedorPasarela = 'WOMPI' | 'EPAYCO' | 'BOLD' | 'ECOLLECT';
+export type ProveedorPasarela = 'WOMPI' | 'EPAYCO' | 'BOLD' | 'ECOLLECT' | 'SIMULADOR';
 
 export interface CrearTransaccionEntrada {
   /** Referencia única de la OrdenPago (OP-2026-000123). Nunca se reutiliza. */
