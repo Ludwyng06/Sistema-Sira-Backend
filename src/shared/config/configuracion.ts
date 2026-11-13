@@ -21,6 +21,14 @@ export interface Configuracion {
   SMTP_CONTRASENA: string;
   CORREO_REMITENTE: string;
   ALMACENAMIENTO_DIR: string;
+  PASARELA_PROVEEDOR: 'wompi' | 'ninguna';
+  WOMPI_URL_API: string;
+  WOMPI_LLAVE_PUBLICA: string;
+  WOMPI_LLAVE_PRIVADA: string;
+  WOMPI_SECRETO_EVENTOS: string;
+  WOMPI_SECRETO_INTEGRIDAD: string;
+  PASARELA_CONSULTA_MINUTOS: number;
+  PASARELA_GRACIA_MINUTOS: number;
 }
 
 // Las variables S3 son opcionales: hoy los archivos van al disco (ALMACENAMIENTO_DIR) y S3 queda para la etapa 2.
@@ -58,6 +66,10 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
 
   const texto = (clave: string, defecto = ''): string =>
     entrada[clave] === undefined ? defecto : String(entrada[clave]);
+  const proveedor = texto('PASARELA_PROVEEDOR', 'ninguna').trim();
+  if (proveedor !== 'ninguna' && proveedor !== 'wompi') {
+    throw new Error('PASARELA_PROVEEDOR debe ser wompi o ninguna.');
+  }
 
   const configuracion: Configuracion = {
     NODE_ENV: texto('NODE_ENV', 'development'),
@@ -82,7 +94,34 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
     SMTP_CONTRASENA: texto('SMTP_CONTRASENA'),
     CORREO_REMITENTE: texto('CORREO_REMITENTE'),
     ALMACENAMIENTO_DIR: texto('ALMACENAMIENTO_DIR', './almacenamiento'),
+    PASARELA_PROVEEDOR: proveedor,
+    WOMPI_URL_API: texto('WOMPI_URL_API', 'https://sandbox.wompi.co/v1').trim().replace(/\/$/, ''),
+    WOMPI_LLAVE_PUBLICA: texto('WOMPI_LLAVE_PUBLICA').trim(),
+    WOMPI_LLAVE_PRIVADA: texto('WOMPI_LLAVE_PRIVADA').trim(),
+    WOMPI_SECRETO_EVENTOS: texto('WOMPI_SECRETO_EVENTOS').trim(),
+    WOMPI_SECRETO_INTEGRIDAD: texto('WOMPI_SECRETO_INTEGRIDAD').trim(),
+    PASARELA_CONSULTA_MINUTOS: numero(entrada.PASARELA_CONSULTA_MINUTOS, 30, 'PASARELA_CONSULTA_MINUTOS'),
+    PASARELA_GRACIA_MINUTOS: numero(entrada.PASARELA_GRACIA_MINUTOS, 120, 'PASARELA_GRACIA_MINUTOS'),
   };
+
+  for (const clave of ['PASARELA_CONSULTA_MINUTOS', 'PASARELA_GRACIA_MINUTOS'] as const) {
+    const valor = configuracion[clave];
+    if (!Number.isSafeInteger(valor) || valor < 1 || valor > 1440) {
+      throw new Error(`${clave} debe ser un entero entre 1 y 1440 minutos.`);
+    }
+  }
+  if (proveedor === 'wompi') {
+    const llaves = ['WOMPI_LLAVE_PUBLICA', 'WOMPI_LLAVE_PRIVADA', 'WOMPI_SECRETO_EVENTOS', 'WOMPI_SECRETO_INTEGRIDAD'] as const;
+    const ausentes = llaves.filter((clave) => !configuracion[clave]);
+    if (ausentes.length) throw new Error(`Faltan variables de pasarela: ${ausentes.join(', ')}.`);
+    if (configuracion.WOMPI_URL_API !== 'https://sandbox.wompi.co/v1') {
+      throw new Error('WOMPI_URL_API debe apuntar a https://sandbox.wompi.co/v1.');
+    }
+    if (!configuracion.WOMPI_LLAVE_PUBLICA.startsWith('pub_test_') ||
+        !configuracion.WOMPI_LLAVE_PRIVADA.startsWith('prv_test_')) {
+      throw new Error('Este adaptador requiere llaves Wompi de sandbox.');
+    }
+  }
 
   if (configuracion.NODE_ENV === 'production') {
     for (const clave of ['JWT_ACCESS_SECRETO', 'JWT_REFRESH_SECRETO'] as const) {

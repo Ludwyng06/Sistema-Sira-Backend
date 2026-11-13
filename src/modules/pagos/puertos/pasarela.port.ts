@@ -1,8 +1,7 @@
 /**
  * Puerto de pasarela de pago (documento base §9.4).
  *
- * ETAPA 2 — no se implementa en el avance de 20 días. Se deja definido para
- * que el módulo de reservas nunca dependa de un proveedor concreto.
+ * El módulo de reservas nunca depende de un proveedor concreto.
  *
  * Diferencia con el documento base: SIRA guarda pesos enteros; la conversión
  * a centavos (valor * 100) la hace CADA ADAPTADOR, no el dominio.
@@ -36,9 +35,10 @@ export interface EventoInterpretado {
 export interface PasarelaPort {
   readonly proveedor: string;
 
+  /** Web Checkout no tiene ID externo hasta el primer evento del proveedor. */
   crearTransaccion(
     entrada: CrearTransaccionEntrada,
-  ): Promise<{ urlCheckout: string; transaccionExternaId: string }>;
+  ): Promise<{ urlCheckout: string; transaccionExternaId: string | null }>;
 
   /** RF-PAG-04: se valida ANTES de procesar el evento, con el cuerpo crudo. */
   verificarFirmaWebhook(cuerpoCrudo: string, cabeceras: Record<string, string>): boolean;

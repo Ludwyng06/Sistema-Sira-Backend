@@ -250,11 +250,19 @@ describe('PagosService', () => {
       const clave = e.almacenamiento.guardar.mock.calls[0]![0] as string;
       expect(clave).toMatch(new RegExp(`^pagos/${ORDEN_ID}/[0-9a-f-]{36}\\.pdf$`));
       expect(e.tx.ordenPago.updateMany).toHaveBeenCalledWith({
-        where: { id: ORDEN_ID, estado: 'PENDIENTE' },
+        where: { id: ORDEN_ID, estado: 'PENDIENTE', medio: { not: 'PASARELA' } },
         data: { soporteUrl: clave, estado: 'EN_VERIFICACION' },
       });
       expect(r).toMatchObject({ estado: 'EN_VERIFICACION', tieneSoporte: true });
       expect(r).not.toHaveProperty('soporteUrl');
+    });
+
+    it('no acepta soporte manual para una orden vinculada a pasarela', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(orden({ medio: 'PASARELA', pasarela: 'WOMPI' }));
+      await expect(e.servicio.cargarSoporte(ORDEN_ID, { size: PDF.length, buffer: PDF }, usuario(), CONTEXTO))
+        .rejects.toMatchObject({ codigo: 'ORDEN_NO_PERMITIDA', status: 409 });
+      expect(e.almacenamiento.guardar).not.toHaveBeenCalled();
     });
 
     it('si la orden ya no está pendiente al guardar (carrera con tesorería) responde 409 y no la revierte', async () => {

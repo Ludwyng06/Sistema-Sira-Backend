@@ -1,0 +1,288 @@
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Cron } from '@nestjs/schedule';
+import type { Prisma } from '../../../generated/prisma/client.js';
+import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
+import { ErrorDominio, noEncontrado } from '../../../shared/errores/error-dominio.js';
+import { PrismaService } from '../../../shared/prisma/prisma.service.js';
+import { transicionOConflicto } from '../../reservas/dominio/maquina-estados.js';
+import { WompiAdapter } from '../adaptadores/wompi.adapter.js';
+import type { CheckoutPasarelaDto, EstadoPagoDto, EventoRecibidoDto } from '../dto/pasarela.dto.js';
+import { PASARELA, type EventoInterpretado, type PasarelaPort } from '../puertos/pasarela.port.js';
+
+@Injectable()
+export class PasarelaService {
+  private readonly logger = new Logger(PasarelaService.name);
+  private procesando = false;
+  private conciliando = false;
+  private ultimoEventoId: string | undefined;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+    @Inject(PASARELA) private readonly pasarela: PasarelaPort,
+    private readonly wompi: WompiAdapter,
+  ) {}
+
+  private ordenPropia(id: string, usuario: UsuarioAutenticado) {
+    return this.prisma.ordenPago.findFirst({
+      where: { id, cotizacion: { solicitud: { solicitante: { usuarioId: usuario.id } } } },
+      include: { cotizacion: { include: { solicitud: true } } },
+    });
+  }
+
+  async iniciar(id: string, usuario: UsuarioAutenticado): Promise<CheckoutPasarelaDto> {
+    const orden = await this.ordenPropia(id, usuario);
+    if (!orden) throw noEncontrado('La orden de pago');
+    if (orden.cotizacion.esExenta || orden.cotizacion.solicitud.esExenta) {
+      throw new ErrorDominio('SOLICITUD_EXENTA', 'Esta solicitud es exenta: no requiere pago.', 422);
+    }
+    if (orden.estado !== 'PENDIENTE' || orden.soporteUrl || orden.venceEn <= new Date() ||
+        orden.cotizacion.solicitud.estado !== 'PAGO_PENDIENTE') {
+      throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'Solo puedes pagar una orden pendiente y vigente.', 409);
+    }
+    const retorno = new URL('/pagos/retorno', this.config.getOrThrow<string>('FRONTEND_URL'));
+    retorno.searchParams.set('orden', id);
+    const checkout = await this.pasarela.crearTransaccion({
+      referencia: orden.referencia, valorPesos: orden.valor, moneda: 'COP',
+      correoPagador: usuario.correo, urlRetorno: retorno.toString(), descripcion: `Orden ${orden.referencia}`,
+    });
+    await this.prisma.$transaction(async (tx) => {
+      // Misma guarda por solicitud que los casos de pago manual y vencimiento.
+      const solicitud = await tx.solicitud.updateMany({
+        where: { id: orden.cotizacion.solicitudId, estado: 'PAGO_PENDIENTE', esExenta: false },
+        data: { actualizadoEn: new Date() },
+      });
+      if (!solicitud.count) throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'La solicitud cambió de estado.', 409);
+      const actual = await tx.ordenPago.findUniqueOrThrow({ where: { id } });
+      if (actual.estado !== 'PENDIENTE' || actual.soporteUrl || actual.venceEn <= new Date()) {
+        throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'La orden cambió de estado.', 409);
+      }
+      const primeraApertura = actual.pasarela === null;
+      const gracia = new Date(Math.max(actual.venceEn.getTime(), Date.now() + this.minutos('PASARELA_GRACIA_MINUTOS', 120) * 60_000));
+      const cambio = await tx.ordenPago.updateMany({
+        where: { id, estado: 'PENDIENTE', soporteUrl: null, transaccionExternaId: actual.transaccionExternaId },
+        data: { medio: 'PASARELA', pasarela: this.pasarela.proveedor,
+          ...(primeraApertura ? { venceEn: gracia } : {}) },
+      });
+      if (!cambio.count) throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'La orden cambió de estado.', 409);
+      if (primeraApertura) {
+        await tx.solicitud.update({ where: { id: orden.cotizacion.solicitudId }, data: { venceEn: gracia } });
+        await tx.franjaOcupada.updateMany({
+          where: { reservaItem: { solicitudId: orden.cotizacion.solicitudId }, estado: 'RETENIDA' },
+          data: { retenidaHasta: gracia },
+        });
+      }
+      await tx.bitacora.create({ data: {
+        usuarioId: usuario.id, accion: 'CHECKOUT_INICIADO', entidad: 'OrdenPago', entidadId: id,
+        datosDespues: { proveedor: this.pasarela.proveedor, referencia: orden.referencia },
+      } });
+    });
+    return { ordenPagoId: id, urlCheckout: checkout.urlCheckout, transaccionExternaId: orden.transaccionExternaId };
+  }
+
+  async estado(id: string, usuario: UsuarioAutenticado): Promise<EstadoPagoDto> {
+    // La página de retorno solo lee datos locales; no acepta estado ni ID del navegador.
+    const orden = await this.ordenPropia(id, usuario);
+    if (!orden) throw noEncontrado('La orden de pago');
+    if (orden.cotizacion.esExenta || orden.cotizacion.solicitud.esExenta) {
+      throw new ErrorDominio('SOLICITUD_EXENTA', 'Esta solicitud es exenta: no requiere pago.', 422);
+    }
+    return { referencia: orden.referencia, estado: orden.estado, valor: orden.valor };
+  }
+
+  async recibir(crudo: string, cabeceras: Record<string, string>): Promise<EventoRecibidoDto> {
+    if (!this.pasarela.verificarFirmaWebhook(crudo, cabeceras)) {
+      throw new ErrorDominio('FIRMA_WEBHOOK_INVALIDA', 'La firma del evento no es válida.', 401);
+    }
+    let evento: EventoInterpretado;
+    try { evento = this.pasarela.interpretarEvento(JSON.parse(crudo)); }
+    catch { throw new ErrorDominio('EVENTO_INVALIDO', 'El evento de pago no es válido.', 422); }
+    try {
+      // Cola durable en EventoPasarela: no hay llamadas HTTP ni correos en esta petición.
+      await this.prisma.eventoPasarela.create({ data: {
+        proveedor: this.pasarela.proveedor, idEventoExterno: evento.idEventoExterno,
+        cuerpo: { crudo }, firmaValida: true,
+      } });
+      return { recibido: true, duplicado: false };
+    } catch (error) {
+      if ((error as { code?: string }).code === 'P2002') return { recibido: true, duplicado: true };
+      throw error;
+    }
+  }
+
+  @Cron('*/10 * * * * *')
+  async procesarPendientes(): Promise<void> {
+    if (this.procesando || this.pasarela.proveedor !== 'WOMPI') return;
+    this.procesando = true;
+    try {
+      const eventos = await this.prisma.eventoPasarela.findMany({
+        where: { proveedor: 'WOMPI', firmaValida: true, procesadoEn: null },
+        orderBy: [{ recibidoEn: 'asc' }, { id: 'asc' }], take: 20,
+        ...(this.ultimoEventoId ? { cursor: { id: this.ultimoEventoId }, skip: 1 } : {}),
+      });
+      // Rota el cursor incluso ante fallos: un lote de eventos fallidos no bloquea los nuevos.
+      this.ultimoEventoId = eventos.length === 20 ? eventos[eventos.length - 1]!.id : undefined;
+      for (const fila of eventos) {
+        try {
+          const cuerpo = fila.cuerpo as { crudo: string };
+          const evento = this.wompi.interpretarEvento(JSON.parse(cuerpo.crudo));
+          // reference/currency no están necesariamente firmados por Wompi: se verifican por API.
+          const verificado = await this.wompi.consultarTransaccion(evento.transaccionExternaId);
+          if (verificado.valorPesos !== evento.valorPesos) {
+            throw new ErrorDominio('EVENTO_NO_COINCIDE', 'El evento no coincide con la transacción del proveedor.', 422);
+          }
+          await this.aplicar(verificado, fila.id);
+        } catch (error) {
+          const definitivo = error instanceof ErrorDominio && error.status !== 503;
+          await this.prisma.eventoPasarela.updateMany({ where: { id: fila.id, procesadoEn: null }, data: {
+            error: error instanceof ErrorDominio ? error.codigo : 'PROCESAMIENTO_NO_DISPONIBLE',
+            ...(definitivo ? { procesadoEn: new Date() } : {}),
+          } });
+          this.logger.warn(`Evento ${fila.id}: procesamiento pendiente o rechazado.`);
+        }
+      }
+    } catch (error) {
+      this.logger.error('No se pudo procesar la cola de eventos de pasarela.', error instanceof Error ? error.stack : undefined);
+    } finally { this.procesando = false; }
+  }
+
+  /** RN-12: única escritura de estados de pasarela, compartida por webhook y consulta autenticada. */
+  async aplicar(evento: EventoInterpretado, eventoId?: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      // Orden de bloqueo: solicitud -> orden -> evento, como pagos y vencimientos existentes.
+      const candidata = await tx.ordenPago.findUnique({
+        where: { referencia: evento.referencia }, include: { cotizacion: true },
+      });
+      if (!candidata || candidata.pasarela !== 'WOMPI' || candidata.medio !== 'PASARELA') {
+        throw noEncontrado('La orden de pago');
+      }
+      await tx.solicitud.update({ where: { id: candidata.cotizacion.solicitudId }, data: { actualizadoEn: new Date() } });
+      await tx.ordenPago.update({ where: { id: candidata.id }, data: { actualizadaEn: new Date() } });
+      const orden = await tx.ordenPago.findUniqueOrThrow({ where: { id: candidata.id },
+        include: { cotizacion: { include: { solicitud: { include: { reservas: true } } } } },
+      });
+      if (eventoId) {
+        const reclamo = await tx.eventoPasarela.updateMany({
+          where: { id: eventoId, procesadoEn: null },
+          data: { procesadoEn: new Date(), ordenPagoId: orden.id, error: null },
+        });
+        if (!reclamo.count) return;
+      }
+      if (orden.valor !== evento.valorPesos) throw new ErrorDominio('VALOR_NO_COINCIDE', 'El valor no coincide con la orden.', 422);
+      if (orden.cotizacion.esExenta || orden.cotizacion.solicitud.esExenta) {
+        throw new ErrorDominio('SOLICITUD_EXENTA', 'Esta solicitud es exenta: no requiere pago.', 422);
+      }
+      if (orden.transaccionExternaId && orden.transaccionExternaId !== evento.transaccionExternaId) {
+        throw new ErrorDominio('TRANSACCION_NO_COINCIDE', 'La transacción no coincide con la orden.', 422);
+      }
+      // Un evento antiguo o una consulta concurrente nunca revierte un pago ni repite efectos.
+      if (orden.estado === 'APROBADA' || orden.estado === 'RECHAZADA' || orden.estado === 'ANULADA') return;
+      const estado = evento.estado === 'ERROR' ? 'RECHAZADA' : evento.estado;
+      await tx.ordenPago.update({ where: { id: orden.id }, data: {
+        transaccionExternaId: evento.transaccionExternaId,
+        ...(estado !== 'PENDIENTE' ? { estado } : {}),
+        ...(estado === 'APROBADA' ? { pagadoEn: new Date() } : {}),
+      } });
+      const solicitud = orden.cotizacion.solicitud;
+      let confirmada = false;
+      if (estado === 'APROBADA') {
+        const tardiaRecuperable = solicitud.estado === 'VENCIDA'
+          ? await this.recuperarFranjas(tx, solicitud.reservas.map((r) => r.id)) : false;
+        if (solicitud.estado === 'PAGO_PENDIENTE' || tardiaRecuperable) {
+          const destino = transicionOConflicto(solicitud.estado,
+            tardiaRecuperable ? 'CONFIRMAR_PAGO_TARDIO' : 'CONFIRMAR_PAGO');
+          await tx.solicitud.update({ where: { id: solicitud.id }, data: { estado: destino, venceEn: null } });
+          await tx.franjaOcupada.updateMany({
+            where: { reservaItemId: { in: solicitud.reservas.map((r) => r.id) }, estado: 'RETENIDA' },
+            data: { estado: 'CONFIRMADA', retenidaHasta: null },
+          });
+          await tx.historialEstadoSolicitud.create({ data: {
+            solicitudId: solicitud.id, estadoAnterior: solicitud.estado, estadoNuevo: destino,
+            observacion: `Pago Wompi ${orden.referencia}`,
+          } });
+          confirmada = true;
+        } else {
+          // No se confirma una reserva liberada sin verificar disponibilidad: conserva el dinero
+          // recibido y registra reembolso para tesorería, sin volver a cobrar ni ocupar horarios.
+          await tx.reembolso.create({ data: {
+            ordenPagoId: orden.id, valor: orden.valor, motivo: 'Pago Wompi recibido fuera del estado de pago; requiere conciliación de tesorería.',
+          } });
+          const tesoreria = await tx.usuarioRol.findMany({ where: { rol: 'TESORERIA' }, select: { usuarioId: true } });
+          for (const usuarioId of new Set(tesoreria.map((fila) => fila.usuarioId))) {
+            await tx.notificacion.create({ data: { usuarioId, titulo: `Pago tardío ${orden.referencia}`,
+              cuerpo: 'Pago recibido sin reserva recuperable; revisa el reembolso total solicitado.' } });
+          }
+        }
+      }
+      if (estado !== 'PENDIENTE') {
+        await tx.bitacora.create({ data: { accion: `PAGO_PASARELA_${estado}`, entidad: 'OrdenPago', entidadId: orden.id,
+          datosDespues: { referencia: orden.referencia, transaccionExternaId: evento.transaccionExternaId, valor: orden.valor },
+        } });
+        // Notificación interna durable y atómica; no se repite correo ante reintentos.
+        const solicitante = await tx.solicitante.findUniqueOrThrow({ where: { id: solicitud.solicitanteId } });
+        await tx.notificacion.create({ data: { usuarioId: solicitante.usuarioId,
+          titulo: `Pago ${estado.toLowerCase()} de ${orden.referencia}`,
+          cuerpo: estado === 'APROBADA' && !confirmada
+            ? 'Recibimos tu pago fuera del plazo; tesorería revisará el reembolso.'
+            : `El proveedor confirmó el estado ${estado.toLowerCase()} de tu pago.`,
+        } });
+      }
+    });
+  }
+
+  private async recuperarFranjas(tx: Prisma.TransactionClient, reservas: string[]): Promise<boolean> {
+    if (!reservas.length) return false;
+    const franjas = await tx.franjaOcupada.findMany({ where: { reservaItemId: { in: reservas } } });
+    if (franjas.length !== reservas.length) return false;
+    for (const franja of franjas) {
+      const choque = await tx.franjaOcupada.findFirst({ where: {
+        id: { not: franja.id }, espacioId: franja.espacioId, estado: { not: 'LIBERADA' },
+        inicio: { lt: franja.fin }, fin: { gt: franja.inicio },
+      }, select: { id: true } });
+      if (choque) return false;
+    }
+    // La exclusión SQL es la última defensa ante una reserva concurrente. Un savepoint
+    // permite registrar el dinero y el reembolso aunque esa recuperación entre en conflicto.
+    await tx.$executeRaw`SAVEPOINT recuperar_pago_tardio`;
+    try {
+      await tx.franjaOcupada.updateMany({ where: { id: { in: franjas.map((f) => f.id) } },
+        data: { estado: 'CONFIRMADA', retenidaHasta: null } });
+      await tx.$executeRaw`RELEASE SAVEPOINT recuperar_pago_tardio`;
+      return true;
+    } catch (error) {
+      await tx.$executeRaw`ROLLBACK TO SAVEPOINT recuperar_pago_tardio`;
+      await tx.$executeRaw`RELEASE SAVEPOINT recuperar_pago_tardio`;
+      const detalle = `${error instanceof Error ? error.message : String(error)} ${JSON.stringify(error)}`;
+      if (detalle.includes('23P01') || detalle.includes('sin_solapamiento')) return false;
+      throw error;
+    }
+  }
+
+  @Cron('0 */10 * * * *')
+  async consultarPendientes(): Promise<void> {
+    if (this.conciliando || this.pasarela.proveedor !== 'WOMPI') return;
+    this.conciliando = true;
+    try {
+      const ordenes = await this.prisma.ordenPago.findMany({ where: {
+        pasarela: 'WOMPI', medio: 'PASARELA', estado: 'PENDIENTE', transaccionExternaId: { not: null },
+        actualizadaEn: { lte: new Date(Date.now() - this.minutos('PASARELA_CONSULTA_MINUTOS', 30) * 60_000) },
+      }, orderBy: { actualizadaEn: 'asc' }, take: 100 });
+      for (const orden of ordenes) {
+        try {
+          const evento = await this.wompi.consultarTransaccion(orden.transaccionExternaId!);
+          if (evento.referencia !== orden.referencia) throw new Error('Referencia distinta a la consultada.');
+          await this.aplicar(evento);
+        } catch { this.logger.warn(`No se pudo conciliar la orden ${orden.id}.`); }
+      }
+    } catch (error) {
+      this.logger.error('No se pudo consultar los pagos pendientes.', error instanceof Error ? error.stack : undefined);
+    } finally { this.conciliando = false; }
+  }
+
+  private minutos(clave: string, defecto: number): number {
+    const valor = Number(this.config.get<string | number>(clave) ?? defecto);
+    if (!Number.isSafeInteger(valor) || valor < 1 || valor > 1440) throw new Error(`Configuración inválida: ${clave}.`);
+    return valor;
+  }
+}

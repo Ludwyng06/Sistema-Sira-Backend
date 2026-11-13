@@ -12,6 +12,7 @@ import { registroPeticiones } from './shared/logs/registro-peticiones.js';
 async function bootstrap() {
   // RNF-15: en producción los logs de la aplicación también salen en JSON.
   const app = await NestFactory.create(AppModule, {
+    rawBody: true,
     logger: new ConsoleLogger({ json: process.env.NODE_ENV === 'production' }),
   });
   const config = app.get(ConfigService);

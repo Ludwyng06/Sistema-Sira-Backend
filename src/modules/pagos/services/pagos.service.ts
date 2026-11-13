@@ -210,6 +210,9 @@ export class PagosService {
     contexto: ContextoPago,
   ): Promise<OrdenPagoDto> {
     const orden = await this.ordenPropia(ordenId, usuario);
+    if (orden.medio === MedioPago.PASARELA) {
+      throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'Esta orden se paga por pasarela; no admite soporte de consignación.', 409);
+    }
     if (orden.estado !== EstadoOrdenPago.PENDIENTE) {
       throw new ErrorDominio(
         'ORDEN_NO_PERMITIDA',
@@ -237,7 +240,7 @@ export class PagosService {
       const actualizada = await this.prisma.$transaction(async (tx) => {
         // Guarda: si tesorería o el vencimiento ya resolvieron la orden, el soporte no la revierte.
         const { count } = await tx.ordenPago.updateMany({
-          where: { id: orden.id, estado: EstadoOrdenPago.PENDIENTE },
+          where: { id: orden.id, estado: EstadoOrdenPago.PENDIENTE, medio: { not: MedioPago.PASARELA } },
           data: { soporteUrl: clave, estado: EstadoOrdenPago.EN_VERIFICACION },
         });
         if (count === 0) {

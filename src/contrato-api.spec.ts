@@ -87,6 +87,9 @@ describe('Contrato de la API completa (Swagger)', () => {
       'POST /api/solicitudes/{id}/documentos',
       'POST /api/pagos/ordenes',
       'POST /api/pagos/ordenes/{id}/verificacion',
+      'POST /api/pagos/ordenes/{id}/pasarela',
+      'POST /api/pagos/webhooks/wompi',
+      'GET /api/pagos/ordenes/{id}/estado',
       'POST /api/actas',
       'GET /api/notificaciones',
       'GET /api/reportes/tablero',
@@ -220,6 +223,7 @@ describe('Contrato de la API completa (Swagger)', () => {
       'POST /api/auth/verificar-correo',
       'POST /api/auth/ingresar',
       'POST /api/tarifas/calcular',
+      'POST /api/pagos/webhooks/wompi',
     ].sort(),
     );
   });
