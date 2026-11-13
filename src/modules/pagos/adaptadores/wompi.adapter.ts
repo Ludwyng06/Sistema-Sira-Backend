@@ -22,7 +22,7 @@ export function sha256(valor: string): string {
 
 @Injectable()
 export class WompiAdapter implements PasarelaPort {
-  readonly proveedor = 'WOMPI';
+  readonly proveedor = 'WOMPI' as const;
   constructor(private readonly config: ConfigService) {}
 
   private ambiente(): 'test' | 'prod' {
@@ -38,6 +38,7 @@ export class WompiAdapter implements PasarelaPort {
   }
 
   async crearTransaccion(entrada: CrearTransaccionEntrada) {
+    // Firma y Web Checkout oficiales: https://docs.wompi.co/docs/colombia/widget-checkout-web/
     if (!Number.isSafeInteger(entrada.valorPesos) || entrada.valorPesos <= 0 ||
         !Number.isSafeInteger(entrada.valorPesos * 100) || entrada.moneda !== 'COP') {
       throw new ErrorDominio('VALOR_INVALIDO', 'El valor del pago no es válido.', 422);
@@ -54,6 +55,7 @@ export class WompiAdapter implements PasarelaPort {
   }
 
   verificarFirmaWebhook(crudo: string, cabeceras: Record<string, string>): boolean {
+    // https://docs.wompi.co/docs/colombia/eventos/
     try {
       const evento = objeto(JSON.parse(crudo));
       if (evento.event !== 'transaction.updated' || evento.environment !== this.ambiente()) return false;
@@ -121,6 +123,7 @@ export class WompiAdapter implements PasarelaPort {
   }
 
   async consultarTransaccion(id: string): Promise<EventoInterpretado> {
+    // GET autenticado: https://docs.wompi.co/docs/colombia/transacciones/
     const transaccion = this.interpretarTransaccion(await this.consultar(`/transactions/${encodeURIComponent(id)}`));
     if (transaccion.transaccionExternaId !== id) throw new Error('ID Wompi distinto al consultado.');
     return transaccion;
@@ -128,6 +131,9 @@ export class WompiAdapter implements PasarelaPort {
 
   /** RF-PAG-06: respaldo aun cuando nunca se recibió el webhook que aporta el ID. */
   async consultarPorReferencia(referencia: string): Promise<EventoInterpretado | null> {
+    // no verificado: el filtro reference de GET /transactions requiere validación en cuenta Wompi.
+    // La guía pública de seguimiento solo confirma la consulta por ID:
+    // https://docs.wompi.co/docs/colombia/seguimiento-de-transacciones/
     const datos = await this.consultar(`/transactions?${new URLSearchParams({ reference: referencia })}`);
     if (!Array.isArray(datos)) throw new Error('Respuesta de búsqueda Wompi inválida.');
     const coincidentes = datos.filter((fila: unknown) => objeto(fila).reference === referencia);

@@ -89,6 +89,8 @@ describe('Contrato de la API completa (Swagger)', () => {
       'POST /api/pagos/ordenes/{id}/verificacion',
       'POST /api/pagos/ordenes/{id}/pasarela',
       'POST /api/pagos/webhooks/wompi',
+      'POST /api/pagos/webhooks/{proveedor}',
+      'GET /api/pagos/checkout/epayco',
       'GET /api/pagos/ordenes/{id}/estado',
       'POST /api/actas',
       'GET /api/notificaciones',
@@ -154,9 +156,9 @@ describe('Contrato de la API completa (Swagger)', () => {
     }
   });
 
-  it('ningún endpoint responde 501: todo el contrato publicado está implementado', () => {
+  it('solo el checkout multiproveedor declara 501 por integraciones que fallan cerrado', () => {
     const con501 = rutas.filter((r) => '501' in r.op.responses).map((r) => r.clave);
-    expect(con501).toEqual([]);
+    expect(con501).toEqual(['POST /api/pagos/ordenes/{id}/pasarela']);
   });
 
   it('todo endpoint tiene resumen y descripción', () => {
@@ -224,6 +226,8 @@ describe('Contrato de la API completa (Swagger)', () => {
       'POST /api/auth/ingresar',
       'POST /api/tarifas/calcular',
       'POST /api/pagos/webhooks/wompi',
+      'POST /api/pagos/webhooks/{proveedor}',
+      'GET /api/pagos/checkout/epayco',
     ].sort(),
     );
   });

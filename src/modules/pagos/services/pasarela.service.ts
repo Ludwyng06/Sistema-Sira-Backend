@@ -6,9 +6,8 @@ import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import { ErrorDominio, noEncontrado } from '../../../shared/errores/error-dominio.js';
 import { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import { transicionOConflicto } from '../../reservas/dominio/maquina-estados.js';
-import { WompiAdapter } from '../adaptadores/wompi.adapter.js';
 import type { CheckoutPasarelaDto, EstadoPagoDto, EventoRecibidoDto } from '../dto/pasarela.dto.js';
-import { PASARELA, type EventoInterpretado, type PasarelaPort } from '../puertos/pasarela.port.js';
+import { PASARELA, PASARELAS, type EventoInterpretado, type PasarelaSeleccionada, type RegistroPasarelas } from '../puertos/pasarela.port.js';
 
 const ACCIONES_INTENTO = ['CHECKOUT_INICIADO', 'CHECKOUT_REINTENTADO'];
 const ESTADOS_REINTENTABLES: readonly string[] = ['RECHAZADA', 'ANULADA', 'ERROR'];
@@ -23,9 +22,25 @@ export class PasarelaService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-    @Inject(PASARELA) private readonly pasarela: PasarelaPort,
-    private readonly wompi: WompiAdapter,
+    @Inject(PASARELA) private readonly pasarela: PasarelaSeleccionada,
+    @Inject(PASARELAS) private readonly adaptadores: RegistroPasarelas,
   ) {}
+
+  private adaptador(proveedor: string) {
+    const adaptador = this.adaptadores.get(proveedor.toUpperCase());
+    if (!adaptador) throw noEncontrado('La pasarela');
+    return adaptador;
+  }
+
+  private interpretarCuerpo(crudo: string): unknown {
+    if (crudo.trimStart().startsWith('{')) return JSON.parse(crudo);
+    const campos: Record<string, string> = {};
+    for (const [clave, valor] of new URLSearchParams(crudo)) {
+      if (Object.hasOwn(campos, clave) || ['__proto__', 'constructor', 'prototype'].includes(clave)) throw new Error('Campo duplicado.');
+      campos[clave] = valor;
+    }
+    return campos;
+  }
 
   private ordenPropia(id: string, usuario: UsuarioAutenticado) {
     return this.prisma.ordenPago.findFirst({
@@ -59,11 +74,14 @@ export class PasarelaService {
       if ((actual.estado !== 'PENDIENTE' && !reintento) || actual.soporteUrl || actual.venceEn <= new Date() || actual.valor <= 0) {
         throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'La orden cambió de estado.', 409);
       }
-      const anterior = await this.ultimoIntento(tx, id, actual.referencia);
+      const pasarela = actual.pasarela ? this.adaptador(actual.pasarela) : this.pasarela;
+      const anterior = await this.ultimoIntento(tx, id, actual.referencia, pasarela.proveedor);
       const numeroIntento = anterior.numero + (reintento ? 1 : 0);
       const referenciaIntento = reintento ? `${actual.referencia}-${numeroIntento}` : anterior.referencia;
-      // Firma local: no se realiza ninguna llamada HTTP dentro de la transacción.
-      const checkout = await this.pasarela.crearTransaccion({
+      // Algunos proveedores crean sesión por HTTP; el timeout transaccional acota el bloqueo.
+      const reutilizar = !reintento && anterior.urlCheckout;
+      const checkout = reutilizar ? { urlCheckout: reutilizar, transaccionExternaId: actual.transaccionExternaId }
+        : await pasarela.crearTransaccion({
         referencia: referenciaIntento, valorPesos: actual.valor, moneda: 'COP',
         correoPagador: usuario.correo, urlRetorno: retorno.toString(), descripcion: `Orden ${actual.referencia}`,
       });
@@ -72,8 +90,10 @@ export class PasarelaService {
       const gracia = new Date(Math.max(actual.venceEn.getTime(), Date.now() + this.minutos('PASARELA_GRACIA_MINUTOS', 120) * 60_000));
       const cambio = await tx.ordenPago.updateMany({
         where: { id, estado: actual.estado, soporteUrl: null, transaccionExternaId: actual.transaccionExternaId },
-        data: { medio: 'PASARELA', pasarela: this.pasarela.proveedor,
-          ...(reintento ? { estado: 'PENDIENTE' as const, transaccionExternaId: null, pagadoEn: null } : {}),
+        data: { medio: 'PASARELA', pasarela: pasarela.proveedor,
+          ...(!reintento && !actual.transaccionExternaId && checkout.transaccionExternaId
+            ? { transaccionExternaId: checkout.transaccionExternaId } : {}),
+          ...(reintento ? { estado: 'PENDIENTE' as const, transaccionExternaId: checkout.transaccionExternaId, pagadoEn: null } : {}),
           ...(primeraApertura ? { venceEn: gracia } : {}) },
       });
       if (!cambio.count) throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'La orden cambió de estado.', 409);
@@ -86,17 +106,18 @@ export class PasarelaService {
       }
       await tx.bitacora.create({ data: {
         usuarioId: usuario.id, accion: reintento ? 'CHECKOUT_REINTENTADO' : 'CHECKOUT_INICIADO', entidad: 'OrdenPago', entidadId: id,
-        datosDespues: { proveedor: this.pasarela.proveedor, referencia: actual.referencia,
-          referenciaIntento, numeroIntento, ambiente: this.config.get<string>('WOMPI_AMBIENTE') || 'test',
+        datosDespues: { proveedor: pasarela.proveedor, referencia: actual.referencia,
+          referenciaIntento, numeroIntento, ambiente: this.config.get<string>(`${pasarela.proveedor}_AMBIENTE`) || 'test',
+          urlCheckout: checkout.urlCheckout, checkoutCreadoEn: reutilizar ? anterior.checkoutCreadoEn : Date.now(),
           transaccionAnteriorId: reintento ? transaccionAnteriorId : null },
       } });
       return { ordenPagoId: id, urlCheckout: checkout.urlCheckout,
-        transaccionExternaId: reintento ? null : actual.transaccionExternaId };
-    });
+        transaccionExternaId: checkout.transaccionExternaId ?? (reintento ? null : actual.transaccionExternaId) };
+    }, { timeout: 30_000 });
   }
 
   /** Bitácora inmutable como registro de intentos, serializado por el bloqueo de solicitud. */
-  private async ultimoIntento(cliente: Pick<Prisma.TransactionClient, 'bitacora'>, id: string, referencia: string) {
+  private async ultimoIntento(cliente: Pick<Prisma.TransactionClient, 'bitacora'>, id: string, referencia: string, proveedor: string) {
     const fila = await cliente.bitacora.findFirst({
       where: { entidad: 'OrdenPago', entidadId: id, accion: { in: ACCIONES_INTENTO } },
       orderBy: { id: 'desc' }, select: { datosDespues: true },
@@ -105,10 +126,13 @@ export class PasarelaService {
     const numero = typeof datos?.numeroIntento === 'number' ? datos.numeroIntento : 1;
     const ref = typeof datos?.referenciaIntento === 'string' ? datos.referenciaIntento : referencia;
     const ambiente = typeof datos?.ambiente === 'string' ? datos.ambiente : 'test';
-    if (fila && ambiente !== (this.config.get<string>('WOMPI_AMBIENTE') || 'test')) {
+    if (fila && (ambiente !== (this.config.get<string>(`${proveedor}_AMBIENTE`) || 'test') ||
+        (typeof datos?.proveedor === 'string' && datos.proveedor !== proveedor))) {
       throw new ErrorDominio('AMBIENTE_NO_COINCIDE', 'La orden pertenece a otro ambiente de pagos.', 409);
     }
-    return { numero, referencia: ref };
+    return { numero, referencia: ref,
+      urlCheckout: typeof datos?.urlCheckout === 'string' ? datos.urlCheckout : null,
+      checkoutCreadoEn: typeof datos?.checkoutCreadoEn === 'number' ? datos.checkoutCreadoEn : 0 };
   }
 
   async estado(id: string, usuario: UsuarioAutenticado): Promise<EstadoPagoDto> {
@@ -121,17 +145,18 @@ export class PasarelaService {
     return { referencia: orden.referencia, estado: orden.estado, valor: orden.valor };
   }
 
-  async recibir(crudo: string, cabeceras: Record<string, string>): Promise<EventoRecibidoDto> {
-    if (!this.pasarela.verificarFirmaWebhook(crudo, cabeceras)) {
+  async recibir(crudo: string, cabeceras: Record<string, string>, proveedor = 'wompi'): Promise<EventoRecibidoDto> {
+    const pasarela = this.adaptador(proveedor);
+    if (!pasarela.verificarFirmaWebhook(crudo, cabeceras)) {
       throw new ErrorDominio('FIRMA_WEBHOOK_INVALIDA', 'La firma del evento no es válida.', 401);
     }
     let evento: EventoInterpretado;
-    try { evento = this.pasarela.interpretarEvento(JSON.parse(crudo)); }
+    try { evento = pasarela.interpretarEvento(this.interpretarCuerpo(crudo)); }
     catch { throw new ErrorDominio('EVENTO_INVALIDO', 'El evento de pago no es válido.', 422); }
     try {
       // Cola durable en EventoPasarela: no hay llamadas HTTP ni correos en esta petición.
       await this.prisma.eventoPasarela.create({ data: {
-        proveedor: this.pasarela.proveedor, idEventoExterno: evento.idEventoExterno,
+        proveedor: pasarela.proveedor, idEventoExterno: evento.idEventoExterno,
         cuerpo: { crudo }, firmaValida: true,
       } });
       return { recibido: true, duplicado: false };
@@ -143,11 +168,11 @@ export class PasarelaService {
 
   @Cron('*/10 * * * * *')
   async procesarPendientes(): Promise<void> {
-    if (this.procesando || this.pasarela.proveedor !== 'WOMPI') return;
+    if (this.procesando) return;
     this.procesando = true;
     try {
       const eventos = await this.prisma.eventoPasarela.findMany({
-        where: { proveedor: 'WOMPI', firmaValida: true, procesadoEn: null },
+        where: { proveedor: { in: [...this.adaptadores.keys()] }, firmaValida: true, procesadoEn: null },
         orderBy: [{ recibidoEn: 'asc' }, { id: 'asc' }], take: 20,
         ...(this.ultimoEventoId ? { cursor: { id: this.ultimoEventoId }, skip: 1 } : {}),
       });
@@ -156,13 +181,14 @@ export class PasarelaService {
       for (const fila of eventos) {
         try {
           const cuerpo = fila.cuerpo as { crudo: string };
-          const evento = this.wompi.interpretarEvento(JSON.parse(cuerpo.crudo));
+          const pasarela = this.adaptador(fila.proveedor);
+          const evento = pasarela.interpretarEvento(this.interpretarCuerpo(cuerpo.crudo));
           // reference/currency no están necesariamente firmados por Wompi: se verifican por API.
-          const verificado = await this.wompi.consultarTransaccion(evento.transaccionExternaId);
+          const verificado = await pasarela.consultarTransaccion(evento.transaccionExternaId);
           if (verificado.valorPesos !== evento.valorPesos) {
             throw new ErrorDominio('EVENTO_NO_COINCIDE', 'El evento no coincide con la transacción del proveedor.', 422);
           }
-          await this.aplicar(verificado, fila.id);
+          await this.aplicar(verificado, fila.id, pasarela.proveedor);
         } catch (error) {
           const definitivo = error instanceof ErrorDominio && error.status !== 503;
           await this.prisma.eventoPasarela.updateMany({ where: { id: fila.id, procesadoEn: null }, data: {
@@ -178,7 +204,7 @@ export class PasarelaService {
   }
 
   /** RN-12: única escritura de estados de pasarela, compartida por webhook y consulta autenticada. */
-  async aplicar(evento: EventoInterpretado, eventoId?: string): Promise<void> {
+  async aplicar(evento: EventoInterpretado, eventoId?: string, proveedor?: string): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       // Orden de bloqueo: solicitud -> orden -> evento, como pagos y vencimientos existentes.
       let candidata = await tx.ordenPago.findUnique({
@@ -194,7 +220,8 @@ export class PasarelaService {
           where: { id: intento.entidadId }, include: { cotizacion: true },
         });
       }
-      if (!candidata || candidata.pasarela !== 'WOMPI' || candidata.medio !== 'PASARELA') {
+      if (!candidata || !candidata.pasarela || candidata.medio !== 'PASARELA' ||
+          (proveedor && candidata.pasarela !== proveedor)) {
         throw noEncontrado('La orden de pago');
       }
       await tx.solicitud.update({ where: { id: candidata.cotizacion.solicitudId }, data: { actualizadoEn: new Date() } });
@@ -209,7 +236,7 @@ export class PasarelaService {
         });
         if (!reclamo.count) return;
       }
-      const vigente = await this.ultimoIntento(tx, orden.id, orden.referencia);
+      const vigente = await this.ultimoIntento(tx, orden.id, orden.referencia, candidata.pasarela);
       // El reclamo anterior conserva el evento y su vínculo; ningún intento viejo modifica el actual.
       if (orden.estado === 'APROBADA' || vigente.referencia !== evento.referencia ||
           (orden.transaccionExternaId && orden.transaccionExternaId !== evento.transaccionExternaId)) {
@@ -246,14 +273,14 @@ export class PasarelaService {
           });
           await tx.historialEstadoSolicitud.create({ data: {
             solicitudId: solicitud.id, estadoAnterior: solicitud.estado, estadoNuevo: destino,
-            observacion: `Pago Wompi ${orden.referencia}`,
+            observacion: `Pago en línea ${candidata.pasarela} ${orden.referencia}`,
           } });
           confirmada = true;
         } else {
           // No se confirma una reserva liberada sin verificar disponibilidad: conserva el dinero
           // recibido y registra reembolso para tesorería, sin volver a cobrar ni ocupar horarios.
           await tx.reembolso.create({ data: {
-            ordenPagoId: orden.id, valor: orden.valor, motivo: 'Pago Wompi recibido fuera del estado de pago; requiere conciliación de tesorería.',
+            ordenPagoId: orden.id, valor: orden.valor, motivo: `Pago en línea ${candidata.pasarela} recibido fuera del estado de pago; requiere conciliación de tesorería.`,
           } });
           const tesoreria = await tx.usuarioRol.findMany({ where: { rol: 'TESORERIA' }, select: { usuarioId: true } });
           for (const usuarioId of new Set(tesoreria.map((fila) => fila.usuarioId))) {
@@ -308,22 +335,23 @@ export class PasarelaService {
 
   @Cron('0 */10 * * * *')
   async consultarPendientes(): Promise<void> {
-    if (this.conciliando || this.pasarela.proveedor !== 'WOMPI') return;
+    if (this.conciliando) return;
     this.conciliando = true;
     try {
       const ordenes = await this.prisma.ordenPago.findMany({ where: {
-        pasarela: 'WOMPI', medio: 'PASARELA', estado: 'PENDIENTE',
+        pasarela: { in: [...this.adaptadores.keys()] }, medio: 'PASARELA', estado: 'PENDIENTE',
         actualizadaEn: { lte: new Date(Date.now() - this.minutos('PASARELA_CONSULTA_MINUTOS', 30) * 60_000) },
       }, orderBy: { actualizadaEn: 'asc' }, take: 100 });
       for (const orden of ordenes) {
         try {
-          const intento = await this.ultimoIntento(this.prisma, orden.id, orden.referencia);
+          const pasarela = this.adaptador(orden.pasarela!);
+          const intento = await this.ultimoIntento(this.prisma, orden.id, orden.referencia, pasarela.proveedor);
           const evento = orden.transaccionExternaId
-            ? await this.wompi.consultarTransaccion(orden.transaccionExternaId)
-            : await this.wompi.consultarPorReferencia(intento.referencia);
+            ? await pasarela.consultarTransaccion(orden.transaccionExternaId)
+            : await pasarela.consultarPorReferencia(intento.referencia);
           if (!evento) continue;
           if (evento.referencia !== intento.referencia) throw new Error('Referencia distinta a la consultada.');
-          await this.aplicar(evento);
+          await this.aplicar(evento, undefined, pasarela.proveedor);
         } catch { this.logger.warn(`No se pudo conciliar la orden ${orden.id}.`); }
       }
     } catch (error) {

@@ -12,6 +12,25 @@ const wompi = {
 };
 
 describe('Configuración de pasarela', () => {
+  it('exige solo las credenciales del proveedor activo y conserva las demás', () => {
+    const epayco = { PASARELA_PROVEEDOR: 'epayco', EPAYCO_P_CUST_ID_CLIENTE: 'cliente', EPAYCO_P_KEY: 'firma-ejemplo',
+      EPAYCO_LLAVE_PUBLICA: 'publica-ejemplo', EPAYCO_LLAVE_PRIVADA: 'privada-ejemplo',
+      EPAYCO_URL_CONFIRMACION: 'https://sira.example/api/pagos/webhooks/epayco' };
+    expect(validarConfiguracion({ ...base, ...epayco })).toMatchObject({ ...epayco, WOMPI_LLAVE_PUBLICA: '', BOLD_LLAVE_SECRETA: '' });
+    expect(() => validarConfiguracion({ ...base, ...epayco, EPAYCO_P_KEY: '' })).toThrow('EPAYCO_P_KEY');
+    expect(() => validarConfiguracion({ ...base, PASARELA_PROVEEDOR: 'bold' })).toThrow('BOLD_LLAVE_IDENTIDAD');
+    expect(() => validarConfiguracion({ ...base, PASARELA_PROVEEDOR: 'ecollect' })).toThrow('ECOLLECT_ENTITY_CODE');
+    expect(validarConfiguracion({ ...base, PASARELA_PROVEEDOR: 'bold', BOLD_LLAVE_IDENTIDAD: 'identidad', BOLD_LLAVE_SECRETA: 'secreta' }))
+      .toMatchObject({ PASARELA_PROVEEDOR: 'bold', BOLD_AMBIENTE: 'test' });
+  });
+
+  it('requiere una confirmación HTTPS al activar ePayco en producción', () => {
+    expect(() => validarConfiguracion({ ...base, PASARELA_PROVEEDOR: 'epayco', EPAYCO_AMBIENTE: 'prod',
+      EPAYCO_P_CUST_ID_CLIENTE: 'cliente', EPAYCO_P_KEY: 'firma', EPAYCO_LLAVE_PUBLICA: 'publica',
+      EPAYCO_LLAVE_PRIVADA: 'privada', EPAYCO_URL_CONFIRMACION: 'http://sira.example/api/pagos/webhooks/epayco' }))
+      .toThrow('HTTPS');
+  });
+
   it('con ninguna no requiere credenciales y conserva valores predeterminados', () => {
     expect(validarConfiguracion(base)).toMatchObject({ PASARELA_PROVEEDOR: 'ninguna', WOMPI_AMBIENTE: 'test',
       WOMPI_LLAVE_PUBLICA: '', WOMPI_SECRETO_EVENTOS: '',

@@ -2,8 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { describe, expect, it, vi } from 'vitest';
 import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import type { PrismaService } from '../../../shared/prisma/prisma.service.js';
-import type { WompiAdapter } from '../adaptadores/wompi.adapter.js';
-import type { EventoInterpretado, PasarelaPort } from '../puertos/pasarela.port.js';
+import type { EventoInterpretado, PasarelaPort, RegistroPasarelas } from '../puertos/pasarela.port.js';
 import { PasarelaService } from './pasarela.service.js';
 
 const usuario: UsuarioAutenticado = { id: 'usuario-1', correo: 'ana@ejemplo.com', roles: ['SOLICITANTE'],
@@ -61,15 +60,59 @@ function entorno() {
   };
   const pasarela = { proveedor: 'WOMPI', crearTransaccion: vi.fn().mockResolvedValue({ urlCheckout: 'https://checkout.wompi.co/p/?firmado', transaccionExternaId: null }),
     verificarFirmaWebhook: vi.fn().mockReturnValue(true), interpretarEvento: vi.fn().mockReturnValue(evento) };
-  const wompi = { interpretarEvento: vi.fn().mockReturnValue(evento), consultarTransaccion: vi.fn().mockResolvedValue({ ...evento }),
+  const wompi = { interpretarEvento: pasarela.interpretarEvento, consultarTransaccion: vi.fn().mockResolvedValue({ ...evento }),
     consultarPorReferencia: vi.fn().mockResolvedValue({ ...evento }) };
+  const adaptadores = new Map<string, PasarelaPort>([['WOMPI', { ...pasarela, ...wompi } as unknown as PasarelaPort]]);
   const servicio = new PasarelaService(prisma as unknown as PrismaService,
     new ConfigService({ FRONTEND_URL: 'http://localhost:3000', WOMPI_AMBIENTE: 'test' }), pasarela as unknown as PasarelaPort,
-    wompi as unknown as WompiAdapter);
-  return { servicio, prisma, tx, orden, solicitud, pasarela, wompi, registros };
+    adaptadores as RegistroPasarelas);
+  return { servicio, prisma, tx, orden, solicitud, pasarela, wompi, registros, adaptadores };
 }
 
 describe('PasarelaService', () => {
+  it('reabrir un intento pendiente reutiliza el checkout guardado sin crear otra sesión', async () => {
+    const e = entorno();
+    const primero = await e.servicio.iniciar('orden-1', usuario);
+    const segundo = await e.servicio.iniciar('orden-1', usuario);
+    expect(segundo.urlCheckout).toBe(primero.urlCheckout);
+    expect(e.pasarela.crearTransaccion).toHaveBeenCalledTimes(1);
+    expect(e.registros.at(-1)?.datosDespues).toMatchObject({ urlCheckout: primero.urlCheckout });
+  });
+
+  it('elige el adaptador del webhook y conserva el proveedor en la cola', async () => {
+    const e = entorno();
+    const epayco = { proveedor: 'EPAYCO', verificarFirmaWebhook: vi.fn().mockReturnValue(true),
+      interpretarEvento: vi.fn().mockReturnValue({ ...evento, idEventoExterno: 'epayco-1' }) };
+    e.adaptadores.set('EPAYCO', epayco as unknown as PasarelaPort);
+    await e.servicio.recibir('x_amount=350000.00&x_currency_code=COP', { 'content-type': 'application/x-www-form-urlencoded' }, 'epayco');
+    expect(epayco.interpretarEvento).toHaveBeenCalledWith({ x_amount: '350000.00', x_currency_code: 'COP' });
+    expect(e.prisma.eventoPasarela.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ proveedor: 'EPAYCO' }) }));
+    expect(e.pasarela.verificarFirmaWebhook).not.toHaveBeenCalled();
+  });
+
+  it('no admite un webhook de un proveedor para una orden de otro proveedor', async () => {
+    const e = entorno();
+    await expect(e.servicio.aplicar(evento, 'evento-1', 'EPAYCO')).rejects.toMatchObject({ status: 404 });
+    expect(e.orden.estado).toBe('PENDIENTE');
+    expect(e.tx.notificacion.create).not.toHaveBeenCalled();
+  });
+
+  it('consulta el proveedor guardado en la orden aunque el activo sea otro', async () => {
+    const e = entorno(); e.pasarela.proveedor = 'EPAYCO';
+    e.prisma.ordenPago.findMany.mockResolvedValue([e.orden]);
+    await e.servicio.consultarPendientes();
+    expect(e.wompi.consultarPorReferencia).toHaveBeenCalledWith(evento.referencia);
+    expect(e.orden.estado).toBe('APROBADA');
+  });
+
+  it('procesa eventos del proveedor original aunque el activo sea otro', async () => {
+    const e = entorno(); e.pasarela.proveedor = 'EPAYCO';
+    e.prisma.eventoPasarela.findMany.mockResolvedValue([{ id: 'evento-1', proveedor: 'WOMPI', cuerpo: { crudo: '{}' } }]);
+    await e.servicio.procesarPendientes();
+    expect(e.wompi.consultarTransaccion).toHaveBeenCalledWith('wompi-1');
+    expect(e.orden.estado).toBe('APROBADA');
+  });
+
   it('rechaza solicitud exenta antes de crear checkout', async () => {
     const e = entorno(); e.solicitud.esExenta = true;
     await expect(e.servicio.iniciar('orden-1', usuario))
@@ -165,7 +208,7 @@ describe('PasarelaService', () => {
 
   it('usa la referencia obtenida por API e ignora la referencia no firmada del webhook', async () => {
     const e = entorno();
-    e.prisma.eventoPasarela.findMany.mockResolvedValue([{ id: 'evento-1', cuerpo: { crudo: '{}' } }]);
+    e.prisma.eventoPasarela.findMany.mockResolvedValue([{ id: 'evento-1', proveedor: 'WOMPI', cuerpo: { crudo: '{}' } }]);
     e.wompi.interpretarEvento.mockReturnValue({ ...evento, referencia: 'orden-ajena' });
     await e.servicio.procesarPendientes();
     expect(e.tx.ordenPago.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { referencia: evento.referencia } }));
@@ -174,7 +217,7 @@ describe('PasarelaService', () => {
 
   it('una falla temporal conserva el evento sin procesar para reintento', async () => {
     const e = entorno();
-    e.prisma.eventoPasarela.findMany.mockResolvedValue([{ id: 'evento-1', cuerpo: { crudo: '{}' } }]);
+    e.prisma.eventoPasarela.findMany.mockResolvedValue([{ id: 'evento-1', proveedor: 'WOMPI', cuerpo: { crudo: '{}' } }]);
     e.wompi.consultarTransaccion.mockRejectedValueOnce(new Error('timeout'));
     await e.servicio.procesarPendientes();
     expect(e.prisma.eventoPasarela.updateMany).toHaveBeenCalledWith({

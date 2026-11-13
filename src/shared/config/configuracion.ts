@@ -21,13 +21,27 @@ export interface Configuracion {
   SMTP_CONTRASENA: string;
   CORREO_REMITENTE: string;
   ALMACENAMIENTO_DIR: string;
-  PASARELA_PROVEEDOR: 'wompi' | 'ninguna';
+  PASARELA_PROVEEDOR: 'wompi' | 'epayco' | 'bold' | 'ecollect' | 'ninguna';
   WOMPI_AMBIENTE: 'test' | 'prod';
   WOMPI_URL_API: string;
   WOMPI_LLAVE_PUBLICA: string;
   WOMPI_LLAVE_PRIVADA: string;
   WOMPI_SECRETO_EVENTOS: string;
   WOMPI_SECRETO_INTEGRIDAD: string;
+  EPAYCO_AMBIENTE: 'test' | 'prod';
+  EPAYCO_P_CUST_ID_CLIENTE: string;
+  EPAYCO_P_KEY: string;
+  EPAYCO_LLAVE_PUBLICA: string;
+  EPAYCO_LLAVE_PRIVADA: string;
+  EPAYCO_URL_CONFIRMACION: string;
+  BOLD_AMBIENTE: 'test' | 'prod';
+  BOLD_LLAVE_IDENTIDAD: string;
+  BOLD_LLAVE_SECRETA: string;
+  ECOLLECT_AMBIENTE: 'test' | 'prod';
+  ECOLLECT_ENTITY_CODE: string;
+  ECOLLECT_SRV_CODE: string;
+  ECOLLECT_API_KEY: string;
+  ECOLLECT_URL_API: string;
   PASARELA_CONSULTA_MINUTOS: number;
   PASARELA_GRACIA_MINUTOS: number;
 }
@@ -68,9 +82,14 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
   const texto = (clave: string, defecto = ''): string =>
     entrada[clave] === undefined ? defecto : String(entrada[clave]);
   const proveedor = texto('PASARELA_PROVEEDOR', 'ninguna').trim();
-  if (proveedor !== 'ninguna' && proveedor !== 'wompi') {
-    throw new Error('PASARELA_PROVEEDOR debe ser wompi o ninguna.');
+  if (proveedor !== 'ninguna' && proveedor !== 'wompi' && proveedor !== 'epayco' && proveedor !== 'bold' && proveedor !== 'ecollect') {
+    throw new Error('PASARELA_PROVEEDOR debe ser ninguna, wompi, epayco, bold o ecollect.');
   }
+  const leerAmbiente = (nombre: string): 'test' | 'prod' => {
+    const valor = texto(nombre, 'test').trim();
+    if (valor !== 'test' && valor !== 'prod') throw new Error(`${nombre} debe ser test o prod.`);
+    return valor;
+  };
   const ambiente = texto('WOMPI_AMBIENTE', 'test').trim();
   if (ambiente !== 'test' && ambiente !== 'prod') throw new Error('WOMPI_AMBIENTE debe ser test o prod.');
   const urlWompi = ambiente === 'test' ? 'https://sandbox.wompi.co/v1' : 'https://production.wompi.co/v1';
@@ -105,6 +124,20 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
     WOMPI_LLAVE_PRIVADA: texto('WOMPI_LLAVE_PRIVADA').trim(),
     WOMPI_SECRETO_EVENTOS: texto('WOMPI_SECRETO_EVENTOS').trim(),
     WOMPI_SECRETO_INTEGRIDAD: texto('WOMPI_SECRETO_INTEGRIDAD').trim(),
+    EPAYCO_AMBIENTE: leerAmbiente('EPAYCO_AMBIENTE'),
+    EPAYCO_P_CUST_ID_CLIENTE: texto('EPAYCO_P_CUST_ID_CLIENTE').trim(),
+    EPAYCO_P_KEY: texto('EPAYCO_P_KEY').trim(),
+    EPAYCO_LLAVE_PUBLICA: texto('EPAYCO_LLAVE_PUBLICA').trim(),
+    EPAYCO_LLAVE_PRIVADA: texto('EPAYCO_LLAVE_PRIVADA').trim(),
+    EPAYCO_URL_CONFIRMACION: texto('EPAYCO_URL_CONFIRMACION').trim(),
+    BOLD_AMBIENTE: leerAmbiente('BOLD_AMBIENTE'),
+    BOLD_LLAVE_IDENTIDAD: texto('BOLD_LLAVE_IDENTIDAD').trim(),
+    BOLD_LLAVE_SECRETA: texto('BOLD_LLAVE_SECRETA').trim(),
+    ECOLLECT_AMBIENTE: leerAmbiente('ECOLLECT_AMBIENTE'),
+    ECOLLECT_ENTITY_CODE: texto('ECOLLECT_ENTITY_CODE').trim(),
+    ECOLLECT_SRV_CODE: texto('ECOLLECT_SRV_CODE').trim(),
+    ECOLLECT_API_KEY: texto('ECOLLECT_API_KEY').trim(),
+    ECOLLECT_URL_API: texto('ECOLLECT_URL_API').trim(),
     PASARELA_CONSULTA_MINUTOS: numero(entrada.PASARELA_CONSULTA_MINUTOS, 30, 'PASARELA_CONSULTA_MINUTOS'),
     PASARELA_GRACIA_MINUTOS: numero(entrada.PASARELA_GRACIA_MINUTOS, 120, 'PASARELA_GRACIA_MINUTOS'),
   };
@@ -125,6 +158,21 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
     if (!configuracion.WOMPI_LLAVE_PUBLICA.startsWith(`pub_${ambiente}_`) ||
         !configuracion.WOMPI_LLAVE_PRIVADA.startsWith(`prv_${ambiente}_`)) {
       throw new Error(`Las llaves Wompi deben corresponder al ambiente ${ambiente} (test=sandbox).`);
+    }
+  }
+  const obligatoriasProveedor: readonly (keyof Configuracion)[] = proveedor === 'epayco'
+    ? ['EPAYCO_P_CUST_ID_CLIENTE', 'EPAYCO_P_KEY', 'EPAYCO_LLAVE_PUBLICA', 'EPAYCO_LLAVE_PRIVADA', 'EPAYCO_URL_CONFIRMACION'] as const
+    : proveedor === 'bold' ? ['BOLD_LLAVE_IDENTIDAD', 'BOLD_LLAVE_SECRETA'] as const
+    : proveedor === 'ecollect' ? ['ECOLLECT_ENTITY_CODE', 'ECOLLECT_SRV_CODE', 'ECOLLECT_API_KEY', 'ECOLLECT_URL_API'] as const : [];
+  const ausentesProveedor = obligatoriasProveedor.filter((clave) => !configuracion[clave]);
+  if (ausentesProveedor.length) throw new Error(`Faltan variables de pasarela: ${ausentesProveedor.join(', ')}.`);
+  if (proveedor === 'epayco') {
+    let url: URL;
+    try { url = new URL(configuracion.EPAYCO_URL_CONFIRMACION); }
+    catch { throw new Error('EPAYCO_URL_CONFIRMACION debe ser una URL válida.'); }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash ||
+        (configuracion.EPAYCO_AMBIENTE === 'prod' && url.protocol !== 'https:')) {
+      throw new Error('EPAYCO_URL_CONFIRMACION debe usar HTTP(S), HTTPS en producción, sin credenciales ni fragmentos.');
     }
   }
 

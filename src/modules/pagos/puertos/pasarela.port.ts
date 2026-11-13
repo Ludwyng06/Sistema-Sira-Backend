@@ -6,11 +6,12 @@
  * Diferencia con el documento base: SIRA guarda pesos enteros; la conversión
  * a centavos (valor * 100) la hace CADA ADAPTADOR, no el dominio.
  *
- * Adaptadores previstos: WompiAdapter, EpaycoAdapter, BoldAdapter, EcollectAdapter,
+ * Adaptadores registrados: WompiAdapter, EpaycoAdapter, BoldAdapter, EcollectAdapter,
  * o el de la plataforma existente pagos.uniputumayo.edu.co (⚠️ por confirmar).
  */
 
 export type EstadoTransaccion = 'APROBADA' | 'RECHAZADA' | 'PENDIENTE' | 'ANULADA' | 'ERROR';
+export type ProveedorPasarela = 'WOMPI' | 'EPAYCO' | 'BOLD' | 'ECOLLECT';
 
 export interface CrearTransaccionEntrada {
   /** Referencia única de la OrdenPago (OP-2026-000123). Nunca se reutiliza. */
@@ -33,7 +34,7 @@ export interface EventoInterpretado {
 }
 
 export interface PasarelaPort {
-  readonly proveedor: string;
+  readonly proveedor: ProveedorPasarela;
 
   /** Web Checkout no tiene ID externo hasta el primer evento del proveedor. */
   crearTransaccion(
@@ -45,6 +46,9 @@ export interface PasarelaPort {
 
   interpretarEvento(cuerpo: unknown): EventoInterpretado;
 
+  consultarTransaccion(id: string): Promise<EventoInterpretado>;
+  consultarPorReferencia(referencia: string): Promise<EventoInterpretado | null>;
+
   /** RF-PAG-06: consulta activa para PSE que se quedan pendientes. */
   consultarEstado(transaccionExternaId: string): Promise<EstadoTransaccion>;
 
@@ -53,3 +57,7 @@ export interface PasarelaPort {
 
 /** Token de inyección: `@Inject(PASARELA) private readonly pasarela: PasarelaPort` */
 export const PASARELA = Symbol('PASARELA');
+export const PASARELAS = Symbol('PASARELAS');
+export type RegistroPasarelas = ReadonlyMap<string, PasarelaPort>;
+export type PasarelaDesactivadaPort = Omit<PasarelaPort, 'proveedor'> & { readonly proveedor: 'NINGUNA' };
+export type PasarelaSeleccionada = PasarelaPort | PasarelaDesactivadaPort;
