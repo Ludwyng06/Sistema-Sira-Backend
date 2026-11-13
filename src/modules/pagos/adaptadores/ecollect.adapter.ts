@@ -45,7 +45,13 @@ export class EcollectAdapter implements PasarelaPort {
     }
     // XML 1.0: no permitir controles, sustitutos aislados ni inyección de etiquetas.
     const textoValido = (valor: unknown): valor is string => typeof valor === 'string' && !!valor.trim() &&
-      !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff\ud800-\udfff]/u.test(valor);
+      Array.from(valor).every((caracter) => {
+        const codigo = caracter.codePointAt(0) ?? 0;
+        return codigo === 0x09 || codigo === 0x0a || codigo === 0x0d ||
+          (codigo >= 0x20 && codigo <= 0xd7ff) ||
+          (codigo >= 0xe000 && codigo <= 0xfffd) ||
+          (codigo >= 0x10000 && codigo <= 0x10ffff);
+      });
     if (!textoValido(entidad) || !textoValido(id)) {
       throw new ErrorDominio('CONSULTA_INVALIDA', 'La entidad o el TicketId de eCollect no es válido.', 422);
     }
