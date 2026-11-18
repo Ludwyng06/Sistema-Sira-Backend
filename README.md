@@ -81,11 +81,18 @@ Con la columna generada `periodo` de `franja_ocupada`, Prisma detecta siempre un
 - Revisa que el SQL generado no toque `sin_solapamiento` ni `periodo`. Si lo hace, vuelve a anexar `prisma/sql/restricciones.sql` (es idempotente).
 - Solo una persona a la vez cambia `prisma/schema.prisma`, y avisa en el grupo.
 
+## Pagos
+
+SIRA opera bajo el modelo oficial de **Pago por enlace con verificación manual** (`PASARELA_PROVEEDOR=ninguna`), adoptado por decisión del director del proyecto de grado para no añadir la complejidad de contratos comerciales, RUT y cuentas de la institución. La orden de pago expone el valor y la referencia (`OP-`); el solicitante puede abrir el enlace de recaudo configurable de la institución (portal institucional / PSE), cargar su comprobante de pago en PDF o imagen (`POST /api/pagos/ordenes/:id/soporte`) y alertar a Tesorería mediante WhatsApp con un mensaje prellenado oficial. Tesorería verifica el pago en su panel (`POST /api/pagos/ordenes/:id/verificacion`).
+
+Para consultar el flujo paso a paso con diagrama de secuencia, la configuración de parámetros `PAGO_*`, el endpoint de instrucciones, el manejo de anticipo/saldo (`TOTAL`/`ANTICIPO`/`SALDO`), la activación de pasarelas en línea o el simulador de pruebas locales, ver [`docs/pago-por-enlace.md`](docs/pago-por-enlace.md).
+
 ## Mapa de la documentación
 
 | Archivo | Para qué |
 |---|---|
 | [`PROMPT-MAESTRO.md`](PROMPT-MAESTRO.md) | Contexto completo: alcance, stack, reglas innegociables y convenciones. |
+| [`docs/pago-por-enlace.md`](docs/pago-por-enlace.md) | **Pagos por enlace**: flujo manual, parámetros `PAGO_*`, anticipo/saldo y pasarelas. |
 | [`docs/architecture/01-project-vision.md`](docs/architecture/01-project-vision.md) | Qué es, qué problema resuelve, usuarios, alcance. |
 | [`docs/architecture/02-data-model.md`](docs/architecture/02-data-model.md) | Entidades, diagrama ER, tabla única de ocupación, máquina de estados. |
 | [`docs/architecture/03-backend.md`](docs/architecture/03-backend.md) | Módulos, autenticación, reglas de negocio, casos de uso, endpoints, errores. |
