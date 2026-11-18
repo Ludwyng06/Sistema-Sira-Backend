@@ -29,6 +29,7 @@ import { ApiErrores } from '../../../shared/errores/api-errores.js';
 import {
   CrearOrdenPagoDto,
   CrearOrdenServicioDto,
+  InstruccionesPagoDto,
   OrdenServicioRespuestaDto,
   FiltrosOrdenesDto,
   OrdenPagoDto,
@@ -191,6 +192,23 @@ export class PagosController {
   @ApiErrores(400, 401, 403)
   listar(@Query() filtros: FiltrosOrdenesDto): Promise<PaginaOrdenesDto> {
     return this.servicio.listar(filtros);
+  }
+
+  @Get(':id/instrucciones')
+  @ApiOperation({
+    summary: 'Consulta las instrucciones de pago por enlace y el aviso por WhatsApp de una orden.',
+    description:
+      'Disponible para el solicitante dueño de la orden, tesorería y administración mientras la orden esté ' +
+      'PENDIENTE, RECHAZADA o EN_VERIFICACION y la solicitud no sea exenta.\n\n' +
+      'Errores: 404 NO_ENCONTRADO; 409 SOLICITUD_EXENTA u ORDEN_NO_PERMITIDA.',
+  })
+  @ApiOkResponse({ type: InstruccionesPagoDto })
+  @ApiErrores(400, 401, 403, 404, 409)
+  instrucciones(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @UsuarioActual() usuario: UsuarioAutenticado,
+  ): Promise<InstruccionesPagoDto> {
+    return this.servicio.instrucciones(id, usuario);
   }
 
   @Get(':id/soporte')

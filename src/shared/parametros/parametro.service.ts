@@ -13,8 +13,8 @@ export class ParametroService {
     return valor;
   }
 
-  async obtenerTexto(clave: string): Promise<string> {
-    const valor = await this.obtenerValor(clave);
+  async obtenerTexto(clave: string, defecto?: string): Promise<string> {
+    const valor = await this.obtenerValor(clave, defecto);
     if (typeof valor !== 'string') {
       throw new Error(`El parámetro "${clave}" debe ser texto.`);
     }

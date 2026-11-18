@@ -121,6 +121,53 @@ export class OrdenServicioRespuestaDto extends OrdenPagoDto {
   numeroOrdenServicio!: string;
 }
 
+export class WhatsappInstruccionesPagoDto {
+  @ApiProperty({ example: '573001234567', description: 'Número de WhatsApp del área con indicativo.' })
+  numero!: string;
+
+  @ApiProperty({
+    example: 'https://wa.me/573001234567?text=Hola...',
+    description: 'Enlace wa.me con el mensaje de aviso prellenado y codificado.',
+  })
+  url!: string;
+}
+
+export class InstruccionesPagoDto {
+  @ApiProperty({ format: 'uuid' })
+  ordenPagoId!: string;
+
+  @ApiProperty({ example: 'OP-2026-000001' })
+  referencia!: string;
+
+  @ApiProperty({ example: 350000, description: 'Valor a pagar en pesos enteros.' })
+  valor!: number;
+
+  @ApiProperty({ enum: TipoOrdenPago, example: TipoOrdenPago.TOTAL })
+  tipo!: TipoOrdenPago;
+
+  @ApiProperty({ enum: EstadoOrdenPago, example: EstadoOrdenPago.PENDIENTE })
+  estado!: EstadoOrdenPago;
+
+  @ApiProperty({ example: '2026-10-24T15:00:00.000Z' })
+  venceEn!: string;
+
+  @ApiProperty({ type: String, nullable: true, example: 'https://recaudo.uniputumayo.edu.co/pagos' })
+  enlacePago!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: 'Realiza el pago por el valor exacto indicando la referencia de la orden y sube el comprobante en SIRA.',
+  })
+  instrucciones!: string | null;
+
+  @ApiProperty({ example: false, description: 'True solo si PASARELA_PROVEEDOR es distinto de ninguna.' })
+  pasarelaEnLinea!: boolean;
+
+  @ApiProperty({ type: WhatsappInstruccionesPagoDto, nullable: true })
+  whatsapp!: WhatsappInstruccionesPagoDto | null;
+}
+
 export class OrdenPagoResumenDto {
   @ApiProperty({ enum: TipoOrdenPago }) tipo!: TipoOrdenPago;
   @ApiProperty({ enum: MedioPago }) medio!: MedioPago;

@@ -15,6 +15,7 @@ describe('ParametroService', () => {
   it('un parámetro opcional nuevo conserva su defecto si aún no existe', async () => {
     findUnique.mockResolvedValue(null);
     await expect(crearServicio().obtenerNumero('PORCENTAJE_ANTICIPO', 0)).resolves.toBe(0);
+    await expect(crearServicio().obtenerTexto('PAGO_ENLACE_URL', '')).resolves.toBe('');
   });
   beforeEach(() => {
     vi.clearAllMocks();

@@ -84,6 +84,21 @@ export class NotificacionesService {
     }
   }
 
+  /** Envía un correo directo a una dirección o buzón de área con el límite de tiempo configurado. */
+  async enviarCorreo(para: string, contenido: ContenidoNotificacion): Promise<void> {
+    const destino = para.trim();
+    if (!destino) return;
+    await this.conLimite(
+      this.correo.enviar({
+        para: destino,
+        asunto: contenido.titulo,
+        texto: contenido.cuerpo,
+        html: `<p>${escaparHtml(contenido.cuerpo)}</p>`,
+      }),
+      TIEMPO_MAXIMO_CORREO_MS,
+    );
+  }
+
   /** Notifica a quien creó la solicitud. */
   async notificarSolicitante(solicitudId: string, contenido: ContenidoNotificacion): Promise<void> {
     try {

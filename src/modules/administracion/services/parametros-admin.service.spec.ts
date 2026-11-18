@@ -247,4 +247,76 @@ describe('ParametrosAdminService', () => {
       expect(error).toMatchObject({ codigo: 'PARAMETRO_INVALIDO', status: 422 });
     });
   });
+
+  describe('parámetros de pago por enlace (PAGO_*)', () => {
+    it('PAGO_ENLACE_URL acepta URL https válida o vacío y rechaza http o URLs inválidas', async () => {
+      const e = crearEntorno(existente('PAGO_ENLACE_URL', ''));
+      await expect(
+        e.servicio.actualizar('PAGO_ENLACE_URL', ' https://recaudo.uniputumayo.edu.co/pagos?pse=1 ', admin, CONTEXTO),
+      ).resolves.toMatchObject({ valor: 'https://recaudo.uniputumayo.edu.co/pagos?pse=1' });
+      await expect(e.servicio.actualizar('PAGO_ENLACE_URL', '   ', admin, CONTEXTO)).resolves.toMatchObject({
+        valor: '',
+      });
+
+      for (const invalido of ['http://recaudo.uniputumayo.edu.co/pagos', 'ftp://itp.edu.co', 'no-es-url', 'https://']) {
+        await expect(e.servicio.actualizar('PAGO_ENLACE_URL', invalido, admin, CONTEXTO)).rejects.toMatchObject({
+          codigo: 'PARAMETRO_INVALIDO',
+          status: 422,
+        });
+      }
+    });
+
+    it('PAGO_WHATSAPP_AREA acepta de 10 a 15 dígitos o vacío y rechaza otros formatos', async () => {
+      const e = crearEntorno(existente('PAGO_WHATSAPP_AREA', ''));
+      await expect(e.servicio.actualizar('PAGO_WHATSAPP_AREA', ' 573001234567 ', admin, CONTEXTO)).resolves.toMatchObject({
+        valor: '573001234567',
+      });
+      await expect(e.servicio.actualizar('PAGO_WHATSAPP_AREA', '3001234567', admin, CONTEXTO)).resolves.toMatchObject({
+        valor: '3001234567',
+      });
+      await expect(e.servicio.actualizar('PAGO_WHATSAPP_AREA', '123456789012345', admin, CONTEXTO)).resolves.toMatchObject({
+        valor: '123456789012345',
+      });
+      await expect(e.servicio.actualizar('PAGO_WHATSAPP_AREA', '', admin, CONTEXTO)).resolves.toMatchObject({
+        valor: '',
+      });
+
+      for (const invalido of ['123456789', '1234567890123456', '+573001234567', '57 300 1234567', 'abc1234567']) {
+        await expect(e.servicio.actualizar('PAGO_WHATSAPP_AREA', invalido, admin, CONTEXTO)).rejects.toMatchObject({
+          codigo: 'PARAMETRO_INVALIDO',
+          status: 422,
+        });
+      }
+    });
+
+    it('PAGO_CORREO_AREA acepta correo válido o vacío y rechaza correos mal formados', async () => {
+      const e = crearEntorno(existente('PAGO_CORREO_AREA', ''));
+      await expect(
+        e.servicio.actualizar('PAGO_CORREO_AREA', ' Tesoreria.Recaudo@Uniputumayo.edu.co ', admin, CONTEXTO),
+      ).resolves.toMatchObject({ valor: 'tesoreria.recaudo@uniputumayo.edu.co' });
+      await expect(e.servicio.actualizar('PAGO_CORREO_AREA', '', admin, CONTEXTO)).resolves.toMatchObject({
+        valor: '',
+      });
+
+      for (const invalido of ['sin-arroba', 'usuario@', '@itp.edu.co', 'usuario@localhost', 'a@b@c.co', 'a b@itp.edu.co']) {
+        await expect(e.servicio.actualizar('PAGO_CORREO_AREA', invalido, admin, CONTEXTO)).rejects.toMatchObject({
+          codigo: 'PARAMETRO_INVALIDO',
+          status: 422,
+        });
+      }
+    });
+
+    it('PAGO_INSTRUCCIONES acepta texto hasta 2000 caracteres o vacío y rechaza textos mayores', async () => {
+      const e = crearEntorno(existente('PAGO_INSTRUCCIONES', 'Instrucciones iniciales'));
+      await expect(
+        e.servicio.actualizar('PAGO_INSTRUCCIONES', '  Paga en PSE con la referencia OP- y sube el soporte.  ', admin, CONTEXTO),
+      ).resolves.toMatchObject({ valor: 'Paga en PSE con la referencia OP- y sube el soporte.' });
+      await expect(e.servicio.actualizar('PAGO_INSTRUCCIONES', '', admin, CONTEXTO)).resolves.toMatchObject({
+        valor: '',
+      });
+      await expect(
+        e.servicio.actualizar('PAGO_INSTRUCCIONES', 'x'.repeat(2001), admin, CONTEXTO),
+      ).rejects.toMatchObject({ codigo: 'PARAMETRO_INVALIDO', status: 422 });
+    });
+  });
 });

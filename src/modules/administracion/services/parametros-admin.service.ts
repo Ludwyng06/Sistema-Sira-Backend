@@ -68,7 +68,34 @@ function validarCuentaRecaudo(valor: unknown): boolean {
 const NUMEROS_QUE_ADMITEN_CERO = new Set(['minutos_gracia_pago_pendiente']);
 const MAXIMO_NUMERO = 100_000;
 const MAXIMO_TEXTO = 200;
+const MAXIMO_URL_PAGO = 500;
+const MAXIMO_INSTRUCCIONES_PAGO = 2_000;
 const DOMINIO = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+const WHATSAPP_DIGITOS = /^(\d{10,15})?$/;
+const CLAVES_PAGO_TEXTO = new Set([
+  'PAGO_ENLACE_URL',
+  'PAGO_INSTRUCCIONES',
+  'PAGO_WHATSAPP_AREA',
+  'PAGO_CORREO_AREA',
+]);
+
+function esUrlHttpsValida(texto: string): boolean {
+  if (texto.length > MAXIMO_URL_PAGO || /\s/.test(texto)) return false;
+  try {
+    const url = new URL(texto);
+    return url.protocol === 'https:' && url.hostname.length > 0 && url.hostname.includes('.');
+  } catch {
+    return false;
+  }
+}
+
+function esCorreoValido(texto: string): boolean {
+  if (texto.length > MAXIMO_TEXTO || /\s/.test(texto)) return false;
+  const partes = texto.split('@');
+  if (partes.length !== 2) return false;
+  const [local, dominio] = partes;
+  return Boolean(local) && !local!.startsWith('.') && !local!.endsWith('.') && DOMINIO.test(dominio!.toLowerCase());
+}
 
 /**
  * Valores que conservan la forma pero rompen los flujos: plazos en 0 o astronómicos (fechas
@@ -82,6 +109,29 @@ function valorIrrazonable(clave: string, valor: unknown): string | null {
   if (clave === 'DIAS_SALDO_ANTES_EVENTO') {
     return typeof valor === 'number' && Number.isInteger(valor) && valor >= 0 && valor <= 365
       ? null : 'DIAS_SALDO_ANTES_EVENTO debe ser un entero entre 0 y 365.';
+  }
+  if (clave === 'PAGO_ENLACE_URL') {
+    const limpio = typeof valor === 'string' ? valor.trim() : '';
+    return typeof valor === 'string' && (limpio.length === 0 || esUrlHttpsValida(limpio))
+      ? null
+      : 'PAGO_ENLACE_URL debe ser una URL https válida o estar vacío.';
+  }
+  if (clave === 'PAGO_WHATSAPP_AREA') {
+    const limpio = typeof valor === 'string' ? valor.trim() : '';
+    return typeof valor === 'string' && WHATSAPP_DIGITOS.test(limpio)
+      ? null
+      : 'PAGO_WHATSAPP_AREA debe tener entre 10 y 15 dígitos con indicativo o estar vacío.';
+  }
+  if (clave === 'PAGO_CORREO_AREA') {
+    const limpio = typeof valor === 'string' ? valor.trim() : '';
+    return typeof valor === 'string' && (limpio.length === 0 || esCorreoValido(limpio))
+      ? null
+      : 'PAGO_CORREO_AREA debe ser un correo electrónico válido o estar vacío.';
+  }
+  if (clave === 'PAGO_INSTRUCCIONES') {
+    return typeof valor === 'string' && valor.trim().length <= MAXIMO_INSTRUCCIONES_PAGO
+      ? null
+      : `PAGO_INSTRUCCIONES no puede superar ${MAXIMO_INSTRUCCIONES_PAGO} caracteres.`;
   }
   if (typeof valor === 'number') {
     const minimo = NUMEROS_QUE_ADMITEN_CERO.has(clave) ? 0 : 1;
@@ -159,6 +209,8 @@ export class ParametrosAdminService {
     if (irrazonable) throw new ErrorDominio('PARAMETRO_INVALIDO', irrazonable, 422, { clave });
     if (clave === 'dominios_institucionales') {
       valor = (valor as string[]).map((d) => d.trim().toLowerCase());
+    } else if (CLAVES_PAGO_TEXTO.has(clave) && typeof valor === 'string') {
+      valor = clave === 'PAGO_CORREO_AREA' ? valor.trim().toLowerCase() : valor.trim();
     }
 
     const fila = await this.prisma.$transaction(async (tx) => {

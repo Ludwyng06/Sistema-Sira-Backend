@@ -121,6 +121,24 @@ describe('NotificacionesService', () => {
       e.prisma.usuario.findUnique.mockRejectedValue(new Error('sin conexión'));
       await expect(e.servicio.notificarUsuario('u-1', { titulo: 't', cuerpo: 'c' })).resolves.toBeUndefined();
     });
+
+    it('enviarCorreo envía al buzón indicado escapando HTML y omite direcciones vacías', async () => {
+      const e = crearEntorno();
+      await e.servicio.enviarCorreo('  recaudo@uniputumayo.edu.co ', {
+        titulo: 'Soporte cargado',
+        cuerpo: 'Orden <OP-1> & valor $ 350.000',
+      });
+      expect(e.correo.enviar).toHaveBeenCalledWith({
+        para: 'recaudo@uniputumayo.edu.co',
+        asunto: 'Soporte cargado',
+        texto: 'Orden <OP-1> & valor $ 350.000',
+        html: '<p>Orden &lt;OP-1&gt; &amp; valor $ 350.000</p>',
+      });
+
+      e.correo.enviar.mockClear();
+      await e.servicio.enviarCorreo('   ', { titulo: 't', cuerpo: 'c' });
+      expect(e.correo.enviar).not.toHaveBeenCalled();
+    });
   });
 
   describe('notificarSolicitante', () => {

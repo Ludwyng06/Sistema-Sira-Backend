@@ -1,5 +1,6 @@
 import { formatearPesos } from '../../../shared/formato/pesos.js';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import type { Prisma } from '../../../generated/prisma/client.js';
 import {
@@ -22,6 +23,7 @@ import type {
   CuentaRecaudoDto,
   FiltrosOrdenesDto,
   FiltrosReembolsosDto,
+  InstruccionesPagoDto,
   OrdenPagoDto,
   OrdenPagoResumenDto,
   PagoTardioDto,
@@ -60,6 +62,29 @@ const ESTADOS_ACTIVOS: EstadoOrdenPago[] = [
   EstadoOrdenPago.APROBADA,
 ];
 
+const ESTADOS_CON_INSTRUCCIONES: EstadoOrdenPago[] = [
+  EstadoOrdenPago.PENDIENTE,
+  EstadoOrdenPago.RECHAZADA,
+  EstadoOrdenPago.EN_VERIFICACION,
+];
+
+/** El contrato del mensaje de WhatsApp exige espacio tras el signo («$ 1.234.567»), a diferencia de `formatearPesos` («$1.234.567»). */
+function formatearPesosConEspacio(valor: number): string {
+  return formatearPesos(Math.trunc(valor)).replace('$', '$ ');
+}
+
+function nombreSolicitante(
+  solicitante: { nombres?: string | null; apellidos?: string | null; razonSocial?: string | null } | null | undefined,
+  alternativa = 'Solicitante',
+): string {
+  if (!solicitante) return alternativa;
+  const nombreCompleto = [solicitante.nombres, solicitante.apellidos]
+    .map((p) => p?.trim())
+    .filter((p): p is string => Boolean(p))
+    .join(' ');
+  return nombreCompleto || solicitante.razonSocial?.trim() || alternativa;
+}
+
 function leerCuenta(valor: unknown): CuentaRecaudoDto {
   const c = valor as Record<string, unknown> | null;
   const campos = ['banco', 'tipo', 'numero', 'titular', 'nit'] as const;
@@ -77,8 +102,26 @@ function leerCuenta(valor: unknown): CuentaRecaudoDto {
 
 type FilaOrden = Prisma.OrdenPagoGetPayload<Record<string, never>>;
 
+interface DatosSolicitudOrden {
+  esExenta?: boolean;
+  solicitud?: {
+    consecutivo?: string | null;
+    esExenta?: boolean;
+    solicitante?: {
+      usuarioId?: string;
+      nombres?: string | null;
+      apellidos?: string | null;
+      razonSocial?: string | null;
+    } | null;
+  } | null;
+}
+
+type FilaOrdenConContexto = FilaOrden & { cotizacion?: DatosSolicitudOrden | null };
+
 @Injectable()
 export class PagosService {
+  private readonly logger = new Logger(PagosService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly consecutivos: ConsecutivoService,
@@ -86,6 +129,7 @@ export class PagosService {
     @Inject(ALMACENAMIENTO) private readonly almacenamiento: AlmacenamientoPort,
     private readonly notificaciones: NotificacionesService,
     private readonly parciales: PagosParcialesService,
+    private readonly config: ConfigService,
   ) {}
 
   /** UC-03 paso 1. RN-08: una solicitud exenta no tiene pago. */
@@ -266,8 +310,9 @@ export class PagosService {
 
     const clave = `pagos/${orden.id}/${randomUUID()}.${EXTENSION_POR_TIPO[tipoMime]}`;
     await this.almacenamiento.guardar(clave, archivo.buffer, tipoMime);
+    let actualizada: FilaOrden;
     try {
-      const actualizada = await this.prisma.$transaction(async (tx) => {
+      actualizada = await this.prisma.$transaction(async (tx) => {
         // Guarda: si tesorería o el vencimiento ya resolvieron la orden, el soporte no la revierte.
         const { count } = await tx.ordenPago.updateMany({
           where: { id: orden.id, estado: EstadoOrdenPago.PENDIENTE, medio: { not: MedioPago.PASARELA } },
@@ -296,11 +341,93 @@ export class PagosService {
         });
         return fila;
       });
-      return this.aDto(actualizada, leerCuenta(await this.parametros.obtenerJson('cuenta_recaudo')));
     } catch (error) {
       await this.almacenamiento.eliminar(clave);
       throw error;
     }
+    const dto = this.aDto(actualizada, leerCuenta(await this.parametros.obtenerJson('cuenta_recaudo')));
+    await this.notificarSoporteCargado(orden, actualizada, usuario);
+    return dto;
+  }
+
+  /** Consulta las instrucciones de pago por enlace y el enlace de aviso por WhatsApp de una orden. */
+  async instrucciones(ordenId: string, usuario: UsuarioAutenticado): Promise<InstruccionesPagoDto> {
+    const esTesoreriaOAdmin =
+      usuario.roles.includes('TESORERIA') ||
+      usuario.roles.includes('ADMINISTRADOR');
+    const orden = (await this.prisma.ordenPago.findFirst({
+      where: {
+        id: ordenId,
+        ...(esTesoreriaOAdmin
+          ? {}
+          : { cotizacion: { solicitud: { solicitante: { usuarioId: usuario.id } } } }),
+      },
+      include: {
+        cotizacion: {
+          include: {
+            solicitud: {
+              include: {
+                solicitante: {
+                  select: { usuarioId: true, nombres: true, apellidos: true, razonSocial: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    })) as FilaOrdenConContexto | null;
+    if (!orden) throw noEncontrado('La orden de pago');
+    if (
+      !esTesoreriaOAdmin &&
+      orden.cotizacion?.solicitud?.solicitante?.usuarioId &&
+      orden.cotizacion.solicitud.solicitante.usuarioId !== usuario.id
+    ) {
+      throw noEncontrado('La orden de pago');
+    }
+    if (orden.cotizacion?.esExenta || orden.cotizacion?.solicitud?.esExenta) {
+      throw new ErrorDominio('SOLICITUD_EXENTA', 'Esta solicitud es exenta: no requiere pago.', 409);
+    }
+    if (!ESTADOS_CON_INSTRUCCIONES.includes(orden.estado)) {
+      throw new ErrorDominio(
+        'ORDEN_NO_PERMITIDA',
+        'Solo se pueden consultar instrucciones de una orden pendiente, rechazada o en verificación.',
+        409,
+      );
+    }
+
+    const [enlaceCrudo, instruccionesCrudas, whatsappCrudo] = await Promise.all([
+      this.parametros.obtenerTexto('PAGO_ENLACE_URL', ''),
+      this.parametros.obtenerTexto('PAGO_INSTRUCCIONES', ''),
+      this.parametros.obtenerTexto('PAGO_WHATSAPP_AREA', ''),
+    ]);
+    const enlacePago = enlaceCrudo.trim() || null;
+    const instrucciones = instruccionesCrudas.trim() || null;
+    const numeroWhatsapp = whatsappCrudo.trim();
+    const solicitud = orden.cotizacion?.solicitud;
+    const nombre = nombreSolicitante(solicitud?.solicitante);
+    const consecutivo = solicitud?.consecutivo ?? orden.referencia;
+    const mensaje =
+      `Hola, soy ${nombre}. Realicé el pago de la orden ${orden.referencia} ` +
+      `por ${formatearPesosConEspacio(orden.valor)} de la solicitud ${consecutivo}. ` +
+      'Ya cargué el comprobante en SIRA.';
+
+    return {
+      ordenPagoId: orden.id,
+      referencia: orden.referencia,
+      valor: orden.valor,
+      tipo: orden.tipo,
+      estado: orden.estado,
+      venceEn: orden.venceEn.toISOString(),
+      enlacePago,
+      instrucciones,
+      pasarelaEnLinea: this.esPasarelaEnLinea(),
+      whatsapp: numeroWhatsapp
+        ? {
+            numero: numeroWhatsapp,
+            url: `https://wa.me/${numeroWhatsapp}?text=${encodeURIComponent(mensaje)}`,
+          }
+        : null,
+    };
   }
 
   /** RF-PAG-08: el medio diferido conserva el mismo proceso de verificación de soportes. */
@@ -856,12 +983,78 @@ export class PagosService {
     };
   }
 
-  private async ordenPropia(ordenId: string, usuario: UsuarioAutenticado): Promise<FilaOrden> {
-    const orden = await this.prisma.ordenPago.findFirst({
+  private async ordenPropia(ordenId: string, usuario: UsuarioAutenticado): Promise<FilaOrdenConContexto> {
+    const orden = (await this.prisma.ordenPago.findFirst({
       where: { id: ordenId, cotizacion: { solicitud: { solicitante: { usuarioId: usuario.id } } } },
-    });
+      include: {
+        cotizacion: {
+          include: {
+            solicitud: {
+              include: {
+                solicitante: {
+                  select: { usuarioId: true, nombres: true, apellidos: true, razonSocial: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    })) as FilaOrdenConContexto | null;
     if (!orden) throw noEncontrado('La orden de pago');
     return orden;
+  }
+
+  private esPasarelaEnLinea(): boolean {
+    const proveedor = (this.config.get<string>('PASARELA_PROVEEDOR') || 'ninguna').trim().toLowerCase();
+    return proveedor !== 'ninguna';
+  }
+
+  private async notificarSoporteCargado(
+    orden: FilaOrdenConContexto,
+    actualizada: FilaOrden,
+    usuario: UsuarioAutenticado,
+  ): Promise<void> {
+    try {
+      const solicitud = orden.cotizacion?.solicitud;
+      const consecutivo = solicitud?.consecutivo ?? actualizada.referencia;
+      const solicitante = nombreSolicitante(solicitud?.solicitante, usuario.correo);
+      const valorTexto = formatearPesosConEspacio(actualizada.valor);
+      const titulo = `Soporte de pago cargado: orden ${actualizada.referencia}`;
+      const cuerpo =
+        `El solicitante ${solicitante} cargó el soporte de pago de la orden ${actualizada.referencia} ` +
+        `por ${valorTexto} correspondiente a la solicitud ${consecutivo}.`;
+
+      const [tesoreria, correoAreaCrudo] = await Promise.all([
+        this.prisma.usuarioRol.findMany({
+          where: { rol: 'TESORERIA', usuario: { activo: true } },
+          select: { usuarioId: true },
+        }),
+        this.parametros.obtenerTexto('PAGO_CORREO_AREA', ''),
+      ]);
+
+      const idsTesoreria = [...new Set(tesoreria.map((t) => t.usuarioId))];
+      const correoArea = correoAreaCrudo.trim();
+      const resultados = await Promise.allSettled([
+        ...idsTesoreria.map((id) =>
+          this.notificaciones.notificarUsuario(id, {
+            titulo,
+            cuerpo,
+            enlace: '/pagos/conciliacion',
+          }),
+        ),
+        ...(correoArea ? [this.notificaciones.enviarCorreo(correoArea, { titulo, cuerpo })] : []),
+      ]);
+      const fallos = resultados.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (fallos.length > 0) {
+        throw fallos[0]!.reason;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo enviar la notificación de soporte de la orden ${actualizada.referencia}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   private aDto(orden: FilaOrden, cuenta: CuentaRecaudoDto): OrdenPagoDto {
