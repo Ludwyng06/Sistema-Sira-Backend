@@ -18,3 +18,11 @@ export class ErrorDominio extends Error {
 export function noEncontrado(recurso: string): ErrorDominio {
   return new ErrorDominio('NO_ENCONTRADO', `${recurso} no existe o no está disponible.`, 404);
 }
+
+export function noImplementado(funcionalidad: string): ErrorDominio {
+  return new ErrorDominio(
+    'NO_IMPLEMENTADO',
+    `${funcionalidad} todavía no está disponible.`,
+    501,
+  );
+}

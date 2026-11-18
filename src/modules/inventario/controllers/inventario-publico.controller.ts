@@ -1,7 +1,9 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
-import { ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags ,
+} from '@nestjs/swagger';
 import { Publico } from '../../../shared/auth/decoradores.js';
-import { ConsultaAsistentesDto, FiltrosEspaciosDto } from '../dto/filtros-espacios.dto.js';
+import { ConsultaAsistentesDto, FiltrosEspaciosDto ,
+} from '../dto/filtros-espacios.dto.js';
 import {
   BloqueDetalleDto,
   BloqueResumenDto,
@@ -26,7 +28,8 @@ export class InventarioPublicoController {
   }
 
   @Get('sedes/:sede/bloques')
-  @ApiOperation({ summary: 'Bloques de una sede con conteo por tipo de espacio.' })
+  @ApiOperation({ summary: 'Bloques de una sede con conteo por tipo de espacio.' ,
+  })
   @ApiOkResponse({ type: [BloqueResumenDto] })
   @ApiNotFoundResponse({ description: 'La sede no existe.' })
   bloques(@Param('sede') sede: string): Promise<BloqueResumenDto[]> {
@@ -34,7 +37,8 @@ export class InventarioPublicoController {
   }
 
   @Get('sedes/:sede/bloques/:bloque')
-  @ApiOperation({ summary: 'Bloque con plano y sus espacios agrupados por piso.' })
+  @ApiOperation({ summary: 'Bloque con plano y sus espacios agrupados por piso.' ,
+  })
   @ApiOkResponse({ type: BloqueDetalleDto })
   @ApiNotFoundResponse({ description: 'El bloque no existe.' })
   bloque(
@@ -53,15 +57,19 @@ export class InventarioPublicoController {
   }
 
   @Get('espacios/:codigo')
-  @ApiOperation({ summary: 'Ficha de un espacio: fotos, dotación, condiciones y tarifas públicas.' })
+  @ApiOperation({ summary: 'Ficha de un espacio: fotos, dotación, condiciones y tarifas públicas.' ,
+  })
   @ApiOkResponse({ type: FichaEspacioDto })
   @ApiNotFoundResponse({ description: 'El espacio no existe o no es visible.' })
-  espacio(@Param('codigo') codigo: string): Promise<FichaEspacioDto> {
-    return this.servicio.obtenerEspacio(codigo);
+  espacio(@Param('codigo') codigo: string,
+    @Query() consulta: ConsultaAsistentesDto,
+  ): Promise<FichaEspacioDto> {
+    return this.servicio.obtenerEspacio(codigo, consulta.asistentes);
   }
 
   @Get('tipos-espacio')
-  @ApiOperation({ summary: 'Tipos de espacio activos y sus reglas de anticipación.' })
+  @ApiOperation({ summary: 'Tipos de espacio activos y sus reglas de anticipación.' ,
+  })
   @ApiOkResponse({ type: [TipoEspacioDto] })
   tipos(): Promise<TipoEspacioDto[]> {
     return this.servicio.listarTipos();

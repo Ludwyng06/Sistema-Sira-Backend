@@ -1,4 +1,5 @@
 import type { EstadoSolicitud } from '../../../generated/prisma/enums.js';
+import { ErrorDominio } from '../../../shared/errores/error-dominio.js';
 
 /**
  * Máquina de estados de la solicitud (docs/architecture/02-data-model.md §4).
@@ -19,6 +20,7 @@ export type EventoSolicitud =
   | 'CONFIRMAR_PAGO'
   | 'CONFIRMAR_PAGO_TARDIO'
   | 'VENCER'
+  | 'VENCER_SALDO'
   | 'ENTREGAR'
   | 'DEVOLVER_ESPACIO'
   | 'CERRAR'
@@ -43,7 +45,8 @@ const TRANSICIONES: Record<EstadoSolicitud, Partial<Record<EventoSolicitud, Esta
   PAGO_PENDIENTE: { CONFIRMAR_PAGO: 'CONFIRMADA', VENCER: 'VENCIDA' },
   // RN-02d: pago tardío con la franja todavía libre.
   VENCIDA: { CONFIRMAR_PAGO_TARDIO: 'CONFIRMADA' },
-  CONFIRMADA: { ENTREGAR: 'EN_USO', CANCELAR: 'CANCELADA' },
+  // Solo el Cron de saldos puede emitir VENCER_SALDO tras verificar deuda y soportes.
+  CONFIRMADA: { ENTREGAR: 'EN_USO', CANCELAR: 'CANCELADA', VENCER_SALDO: 'VENCIDA' },
   EN_USO: { DEVOLVER_ESPACIO: 'FINALIZADA' },
   FINALIZADA: { CERRAR: 'CERRADA' },
   CANCELADA: { REEMBOLSAR: 'REEMBOLSADA' },
@@ -80,6 +83,25 @@ export function validarTransicion(desde: EstadoSolicitud, evento: EventoSolicitu
   const destino = TRANSICIONES[desde][evento];
   if (!destino) throw new TransicionInvalida(desde, evento);
   return destino;
+}
+
+/**
+ * Como `validarTransicion`, pero una transición que ya no corresponde (estado cambiado por otra
+ * operación) se responde como conflicto 409 de dominio y nunca como un error 500.
+ */
+export function transicionOConflicto(desde: EstadoSolicitud, evento: EventoSolicitud): EstadoSolicitud {
+  try {
+    return validarTransicion(desde, evento);
+  } catch (error) {
+    if (error instanceof TransicionInvalida) {
+      throw new ErrorDominio(
+        'TRANSICION_INVALIDA',
+        'Esta acción ya no es válida porque la solicitud cambió de estado. Actualiza e intenta de nuevo.',
+        409,
+      );
+    }
+    throw error;
+  }
 }
 
 /** Eventos disponibles en un estado (para mostrar botones en la interfaz). */

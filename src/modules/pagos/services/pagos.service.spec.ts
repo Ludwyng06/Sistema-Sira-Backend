@@ -1,0 +1,924 @@
+import { Logger } from '@nestjs/common';
+import type { ConfigService } from '@nestjs/config';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AlmacenamientoPort } from '../../../shared/almacenamiento/almacenamiento.port.js';
+import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
+import type { ConsecutivoService } from '../../../shared/consecutivos/consecutivo.service.js';
+import type { ParametroService } from '../../../shared/parametros/parametro.service.js';
+import type { PrismaService } from '../../../shared/prisma/prisma.service.js';
+import type { NotificacionesService } from '../../notificaciones/services/notificaciones.service.js';
+import { PagosService } from './pagos.service.js';
+import type { PagosParcialesService } from './pagos-parciales.service.js';
+
+const AHORA = new Date('2026-10-22T15:00:00.000Z');
+const SOLICITUD_ID = '6e1d8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b';
+const ORDEN_ID = '9f1d8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b';
+const CONTEXTO = { ip: '10.0.0.1', userAgent: 'vitest', correlacionId: 'corr-1' };
+const CUENTA = { banco: 'Banco Agrario', tipo: 'Ahorros', numero: '4-123', titular: 'ITP', nit: '800.247.940-1' };
+const PDF = Buffer.from('%PDF-1.7\ncomprobante');
+
+const usuario = (cambios: Partial<UsuarioAutenticado> = {}): UsuarioAutenticado => ({
+  id: 'u-1',
+  correo: 'ana@ejemplo.com',
+  roles: ['SOLICITANTE'],
+  dependencias: [],
+  correoVerificado: true,
+  esInstitucional: false,
+  ...cambios,
+});
+const tesoreria = usuario({ id: 'u-tes', roles: ['TESORERIA'] });
+
+const cotizacion = {
+  id: 'cot-1',
+  total: 250_000,
+  depositoGarantia: 100_000,
+  validaHasta: new Date('2026-10-24T15:00:00.000Z'),
+};
+
+const solicitud = (cambios: Record<string, unknown> = {}) => ({
+  id: SOLICITUD_ID,
+  estado: 'COTIZADA',
+  esExenta: false,
+  cotizaciones: [cotizacion],
+  ...cambios,
+});
+
+const orden = (cambios: Record<string, unknown> = {}) => ({
+  id: ORDEN_ID,
+  referencia: 'OP-2026-000001',
+  cotizacionId: 'cot-1',
+  valor: 350_000,
+  tipo: 'TOTAL',
+  medio: 'CONSIGNACION',
+  estado: 'PENDIENTE',
+  soporteUrl: null,
+  observacionTesoreria: null,
+  pagadoEn: null,
+  venceEn: new Date('2026-10-24T15:00:00.000Z'),
+  ...cambios,
+});
+
+function crearEntorno(opciones: { solicitud?: unknown; perfil?: unknown } = {}) {
+  const tx = {
+    ordenPago: {
+      create: vi.fn((args: { data: Record<string, unknown> }) => Promise.resolve(orden(args.data))),
+      update: vi.fn((args: { data: Record<string, unknown> }) => Promise.resolve(orden(args.data))),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      findFirst: vi.fn().mockResolvedValue(null),
+      findUniqueOrThrow: vi.fn(() => Promise.resolve(orden({ estado: 'EN_VERIFICACION', soporteUrl: 'pagos/x.pdf' }))),
+    },
+    solicitud: {
+      update: vi.fn().mockResolvedValue({}),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    reembolso: { create: vi.fn().mockResolvedValue({}) },
+    franjaOcupada: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    historialEstadoSolicitud: { create: vi.fn().mockResolvedValue({}) },
+    bitacora: { create: vi.fn().mockResolvedValue({}) },
+  };
+  const prisma = {
+    solicitante: {
+      findUnique: vi.fn().mockResolvedValue(opciones.perfil === undefined ? { id: 'sol-1' } : opciones.perfil),
+    },
+    solicitud: {
+      findFirst: vi.fn().mockResolvedValue(opciones.solicitud === undefined ? solicitud() : opciones.solicitud),
+    },
+    franjaOcupada: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
+    usuarioRol: { findMany: vi.fn().mockResolvedValue([{ usuarioId: 'u-tes' }, { usuarioId: 'u-tes' }]) },
+    ordenPago: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
+    },
+    $transaction: vi.fn((fn: (cliente: typeof tx) => Promise<unknown>) => fn(tx)),
+  };
+  const consecutivos = { siguiente: vi.fn().mockResolvedValue('OP-2026-000001') };
+  const parametros = {
+    obtenerJson: vi.fn().mockResolvedValue(CUENTA),
+    obtenerTexto: vi.fn<(clave: string, defecto?: string) => Promise<string>>().mockResolvedValue(''),
+  };
+  const almacenamiento = {
+    guardar: vi.fn().mockResolvedValue(undefined),
+    leer: vi.fn().mockResolvedValue(PDF),
+    eliminar: vi.fn().mockResolvedValue(undefined),
+  };
+  const notificaciones = {
+    notificarSolicitante: vi.fn().mockResolvedValue(undefined),
+    notificarUsuario: vi.fn().mockResolvedValue(undefined),
+    notificarAprobadores: vi.fn().mockResolvedValue(undefined),
+    enviarCorreo: vi.fn().mockResolvedValue(undefined),
+  };
+  const parciales = { planInicial: vi.fn<(total: number, solicitudId: string) => Promise<{ tipo: 'TOTAL' | 'ANTICIPO'; anticipo: number; saldo: number; saldoVenceEn: Date | null }>>(
+    async (total) => ({ tipo: 'TOTAL', anticipo: total, saldo: 0, saldoVenceEn: null })), asegurarSaldo: vi.fn().mockResolvedValue(null) };
+  const config = {
+    get: vi.fn<(clave: string) => string | undefined>((clave: string) =>
+      clave === 'PASARELA_PROVEEDOR' ? 'ninguna' : undefined,
+    ),
+  };
+  const servicio = new PagosService(
+    prisma as unknown as PrismaService,
+    consecutivos as unknown as ConsecutivoService,
+    parametros as unknown as ParametroService,
+    almacenamiento as unknown as AlmacenamientoPort,
+    notificaciones as unknown as NotificacionesService,
+    parciales as unknown as PagosParcialesService,
+    config as unknown as ConfigService,
+  );
+  return { servicio, notificaciones, prisma, tx, consecutivos, parametros, almacenamiento, parciales, config };
+}
+
+const rechazo = (promesa: Promise<unknown>): Promise<unknown> => promesa.catch((e: unknown) => e);
+
+describe('PagosService', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(AHORA);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  describe('orden de servicio', () => {
+    it('solo ENTIDAD dueña puede registrar PDF y queda EN_VERIFICACION con medio diferido', async () => {
+      const e = crearEntorno({ perfil: { id: 'sol-1', tipo: 'ENTIDAD' } });
+      e.prisma.ordenPago.findFirst.mockResolvedValueOnce(null).mockResolvedValue(orden());
+      e.tx.ordenPago.findUniqueOrThrow.mockResolvedValue(orden({ medio: 'ORDEN_SERVICIO', estado: 'EN_VERIFICACION', soporteUrl: 'pagos/x.pdf' }));
+      const r = await e.servicio.crearOrdenServicio(SOLICITUD_ID, ' OS-123 ', { size: PDF.length, buffer: PDF }, usuario(), CONTEXTO);
+      expect(r).toMatchObject({ medio: 'ORDEN_SERVICIO', estado: 'EN_VERIFICACION', numeroOrdenServicio: 'OS-123' });
+      expect(e.tx.ordenPago.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ medio: 'ORDEN_SERVICIO', estado: 'EN_VERIFICACION' }) }));
+      expect(e.tx.bitacora.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ accion: 'ORDEN_SERVICIO_CARGADA', datosDespues: expect.objectContaining({ numeroOrdenServicio: 'OS-123' }) }) }));
+    });
+    it('rechaza otros perfiles, exentas y PDF inválido sin crear pago', async () => {
+      const natural = crearEntorno({ perfil: { id: 'sol-1', tipo: 'PERSONA_NATURAL' } });
+      await expect(natural.servicio.crearOrdenServicio(SOLICITUD_ID, 'OS-1', { size: PDF.length, buffer: PDF }, usuario(), CONTEXTO)).rejects.toMatchObject({ status: 403 });
+      const exenta = crearEntorno({ perfil: { id: 'sol-1', tipo: 'ENTIDAD' }, solicitud: solicitud({ esExenta: true }) });
+      await expect(exenta.servicio.crearOrdenServicio(SOLICITUD_ID, 'OS-1', { size: PDF.length, buffer: PDF }, usuario(), CONTEXTO)).rejects.toMatchObject({ codigo: 'SOLICITUD_EXENTA' });
+      const invalida = crearEntorno({ perfil: { id: 'sol-1', tipo: 'ENTIDAD' } });
+      await expect(invalida.servicio.crearOrdenServicio(SOLICITUD_ID, 'OS-1', { size: 3, buffer: Buffer.from('jpg') }, usuario(), CONTEXTO)).rejects.toMatchObject({ status: 422 });
+      expect(invalida.prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  it('al crear anticipo congela tipo, importe y vencimiento del saldo', async () => {
+    const e = crearEntorno(); const saldoVenceEn = new Date('2026-12-01T12:00:00Z');
+    e.parciales.planInicial.mockResolvedValue({ tipo: 'ANTICIPO', anticipo: 105000, saldo: 245000, saldoVenceEn });
+    const creada = await e.servicio.crearOrden(SOLICITUD_ID, usuario(), CONTEXTO);
+    expect(creada).toMatchObject({ tipo: 'ANTICIPO', valor: 105000 });
+    expect(e.tx.bitacora.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ datosDespues: expect.objectContaining({ saldoVenceEn: saldoVenceEn.toISOString() }) }) }));
+  });
+
+  describe('crearOrden', () => {
+    it('crea la orden OP- por cotización más depósito, deja PAGO_PENDIENTE y devuelve la cuenta', async () => {
+      const e = crearEntorno();
+      const r = await e.servicio.crearOrden(SOLICITUD_ID, usuario(), CONTEXTO);
+
+      expect(e.consecutivos.siguiente).toHaveBeenCalledWith(expect.anything(), 'ORDEN_PAGO');
+      expect(e.tx.ordenPago.create).toHaveBeenCalledWith({
+        data: {
+          referencia: 'OP-2026-000001',
+          cotizacionId: 'cot-1',
+          valor: 350_000,
+          medio: 'CONSIGNACION',
+          tipo: 'TOTAL',
+          venceEn: cotizacion.validaHasta,
+        },
+      });
+      expect(e.tx.solicitud.updateMany).toHaveBeenCalledWith({
+        where: { id: SOLICITUD_ID, estado: 'COTIZADA' },
+        data: { estado: 'PAGO_PENDIENTE' },
+      });
+      expect(e.tx.historialEstadoSolicitud.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ estadoAnterior: 'COTIZADA', estadoNuevo: 'PAGO_PENDIENTE' }),
+      });
+      expect(e.tx.bitacora.create).toHaveBeenCalledOnce();
+      expect(r).toMatchObject({
+        referencia: 'OP-2026-000001',
+        valor: 350_000,
+        estado: 'PENDIENTE',
+        tieneSoporte: false,
+        cuentaRecaudo: CUENTA,
+      });
+    });
+
+    it('una solicitud exenta responde 422 SOLICITUD_EXENTA (RN-08)', async () => {
+      const e = crearEntorno({ solicitud: solicitud({ esExenta: true, estado: 'CONFIRMADA' }) });
+      const error = await rechazo(e.servicio.crearOrden(SOLICITUD_ID, usuario(), CONTEXTO));
+      expect(error).toMatchObject({ codigo: 'SOLICITUD_EXENTA', status: 422 });
+    });
+
+    it('una solicitud ajena responde 404', async () => {
+      const e = crearEntorno({ solicitud: null });
+      const error = await rechazo(e.servicio.crearOrden(SOLICITUD_ID, usuario(), CONTEXTO));
+      expect(error).toMatchObject({ codigo: 'NO_ENCONTRADO', status: 404 });
+    });
+
+    it('fuera de COTIZADA o PAGO_PENDIENTE responde 409 ORDEN_NO_PERMITIDA', async () => {
+      const e = crearEntorno({ solicitud: solicitud({ estado: 'EN_REVISION' }) });
+      const error = await rechazo(e.servicio.crearOrden(SOLICITUD_ID, usuario(), CONTEXTO));
+      expect(error).toMatchObject({ codigo: 'ORDEN_NO_PERMITIDA', status: 409 });
+    });
+
+    it('con la cotización vencida responde 409 COTIZACION_VENCIDA', async () => {
+      const vencida = { ...cotizacion, validaHasta: new Date('2026-10-22T14:00:00.000Z') };
+      const e = crearEntorno({ solicitud: solicitud({ cotizaciones: [vencida] }) });
+      const error = await rechazo(e.servicio.crearOrden(SOLICITUD_ID, usuario(), CONTEXTO));
+      expect(error).toMatchObject({ codigo: 'COTIZACION_VENCIDA', status: 409 });
+    });
+
+    it('si ya hay una orden pendiente la devuelve sin crear otra', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(orden());
+      const r = await e.servicio.crearOrden(SOLICITUD_ID, usuario(), CONTEXTO);
+      expect(r.referencia).toBe('OP-2026-000001');
+      expect(e.prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('si la orden ya está en verificación responde 409', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(orden({ estado: 'EN_VERIFICACION' }));
+      const error = await rechazo(e.servicio.crearOrden(SOLICITUD_ID, usuario(), CONTEXTO));
+      expect(error).toMatchObject({ codigo: 'ORDEN_NO_PERMITIDA', status: 409 });
+    });
+
+    it('tras un rechazo (solicitud en PAGO_PENDIENTE) permite una orden nueva sin repetir la transición', async () => {
+      const e = crearEntorno({ solicitud: solicitud({ estado: 'PAGO_PENDIENTE' }) });
+      await e.servicio.crearOrden(SOLICITUD_ID, usuario(), CONTEXTO);
+      expect(e.tx.ordenPago.create).toHaveBeenCalledOnce();
+      expect(e.tx.solicitud.updateMany).toHaveBeenCalledWith({
+        where: { id: SOLICITUD_ID, estado: 'PAGO_PENDIENTE' },
+        data: { estado: 'PAGO_PENDIENTE' },
+      });
+      expect(e.tx.historialEstadoSolicitud.create).not.toHaveBeenCalled();
+    });
+
+    it('dos peticiones simultáneas: la segunda devuelve la orden pendiente creada por la primera', async () => {
+      const e = crearEntorno();
+      e.tx.solicitud.updateMany.mockResolvedValue({ count: 0 });
+      e.tx.ordenPago.findFirst.mockResolvedValue(orden());
+      const r = await e.servicio.crearOrden(SOLICITUD_ID, usuario(), CONTEXTO);
+
+      expect(r.referencia).toBe('OP-2026-000001');
+      expect(e.tx.ordenPago.create).not.toHaveBeenCalled();
+      expect(e.consecutivos.siguiente).not.toHaveBeenCalled();
+    });
+
+    it('una orden concurrente ya en verificación o la solicitud cambiada dan 409 y no crean otra', async () => {
+      const e = crearEntorno();
+      e.tx.solicitud.updateMany.mockResolvedValue({ count: 0 });
+      const error = await rechazo(e.servicio.crearOrden(SOLICITUD_ID, usuario(), CONTEXTO));
+      expect(error).toMatchObject({ codigo: 'ORDEN_NO_PERMITIDA', status: 409 });
+
+      const otro = crearEntorno({ solicitud: solicitud({ estado: 'PAGO_PENDIENTE' }) });
+      otro.tx.ordenPago.findFirst.mockResolvedValue(orden({ estado: 'EN_VERIFICACION' }));
+      const enVerificacion = await rechazo(otro.servicio.crearOrden(SOLICITUD_ID, usuario(), CONTEXTO));
+      expect(enVerificacion).toMatchObject({ codigo: 'ORDEN_NO_PERMITIDA', status: 409 });
+      expect(otro.tx.ordenPago.create).not.toHaveBeenCalled();
+    });
+
+    it('una cotización sin valor a pagar responde 422 ORDEN_SIN_VALOR y no un error de base de datos', async () => {
+      const gratis = { ...cotizacion, total: 0, depositoGarantia: 0 };
+      const e = crearEntorno({ solicitud: solicitud({ cotizaciones: [gratis] }) });
+      const error = await rechazo(e.servicio.crearOrden(SOLICITUD_ID, usuario(), CONTEXTO));
+      expect(error).toMatchObject({ codigo: 'ORDEN_SIN_VALOR', status: 422 });
+      expect(e.prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('cargarSoporte', () => {
+    const pendiente = () => orden();
+
+    it('guarda el comprobante y pasa la orden a EN_VERIFICACION', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(pendiente());
+      const r = await e.servicio.cargarSoporte(ORDEN_ID, { size: PDF.length, buffer: PDF }, usuario(), CONTEXTO);
+
+      const clave = e.almacenamiento.guardar.mock.calls[0]![0] as string;
+      expect(clave).toMatch(new RegExp(`^pagos/${ORDEN_ID}/[0-9a-f-]{36}\\.pdf$`));
+      expect(e.tx.ordenPago.updateMany).toHaveBeenCalledWith({
+        where: { id: ORDEN_ID, estado: 'PENDIENTE', medio: { not: 'PASARELA' } },
+        data: { soporteUrl: clave, estado: 'EN_VERIFICACION' },
+      });
+      expect(r).toMatchObject({ estado: 'EN_VERIFICACION', tieneSoporte: true });
+      expect(r).not.toHaveProperty('soporteUrl');
+    });
+
+    it('no acepta soporte manual para una orden vinculada a pasarela', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(orden({ medio: 'PASARELA', pasarela: 'WOMPI' }));
+      await expect(e.servicio.cargarSoporte(ORDEN_ID, { size: PDF.length, buffer: PDF }, usuario(), CONTEXTO))
+        .rejects.toMatchObject({ codigo: 'ORDEN_NO_PERMITIDA', status: 409 });
+      expect(e.almacenamiento.guardar).not.toHaveBeenCalled();
+    });
+
+    it('si la orden ya no está pendiente al guardar (carrera con tesorería) responde 409 y no la revierte', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(pendiente());
+      e.tx.ordenPago.updateMany.mockResolvedValue({ count: 0 });
+      const error = await rechazo(
+        e.servicio.cargarSoporte(ORDEN_ID, { size: PDF.length, buffer: PDF }, usuario(), CONTEXTO),
+      );
+
+      expect(error).toMatchObject({ codigo: 'ORDEN_NO_PERMITIDA', status: 409 });
+      expect(e.tx.bitacora.create).not.toHaveBeenCalled();
+      expect(e.almacenamiento.eliminar).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+      ['una orden que no es suya', null, 'NO_ENCONTRADO', 404],
+      ['una orden que no está pendiente', orden({ estado: 'APROBADA' }), 'ORDEN_NO_PERMITIDA', 409],
+      ['una orden vencida', orden({ venceEn: new Date('2026-10-22T14:00:00.000Z') }), 'ORDEN_VENCIDA', 409],
+    ])('sobre %s responde %s', async (_caso, fila, codigo, status) => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(fila);
+      const error = await rechazo(
+        e.servicio.cargarSoporte(ORDEN_ID, { size: PDF.length, buffer: PDF }, usuario(), CONTEXTO),
+      );
+      expect(error).toMatchObject({ codigo, status });
+    });
+
+    it.each([
+      ['sin archivo', undefined, 'ARCHIVO_REQUERIDO'],
+      ['de más de 10 MB', { size: 10 * 1024 * 1024 + 1, buffer: PDF }, 'ARCHIVO_MUY_GRANDE'],
+      ['con contenido no permitido', { size: 5, buffer: Buffer.from('MZ...') }, 'ARCHIVO_NO_PERMITIDO'],
+    ])('un archivo %s responde 422 %s', async (_caso, archivo, codigo) => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(pendiente());
+      const error = await rechazo(e.servicio.cargarSoporte(ORDEN_ID, archivo, usuario(), CONTEXTO));
+      expect(error).toMatchObject({ codigo, status: 422 });
+      expect(e.almacenamiento.guardar).not.toHaveBeenCalled();
+    });
+
+    it('si falla la base de datos, borra el archivo guardado', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(pendiente());
+      e.prisma.$transaction.mockRejectedValueOnce(new Error('base caída'));
+      await expect(
+        e.servicio.cargarSoporte(ORDEN_ID, { size: PDF.length, buffer: PDF }, usuario(), CONTEXTO),
+      ).rejects.toThrow('base caída');
+      expect(e.almacenamiento.eliminar).toHaveBeenCalledOnce();
+    });
+
+    it('notifica a tesorería y envía correo a PAGO_CORREO_AREA con referencia, valor, consecutivo y solicitante', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(
+        orden({
+          cotizacion: {
+            solicitud: {
+              consecutivo: 'SOL-2026-0042',
+              solicitante: { usuarioId: 'u-1', nombres: 'Ana', apellidos: 'Pérez', razonSocial: null },
+            },
+          },
+        }),
+      );
+      e.parametros.obtenerTexto.mockImplementation(async (clave: string) =>
+        clave === 'PAGO_CORREO_AREA' ? 'recaudo@uniputumayo.edu.co' : '',
+      );
+
+      await e.servicio.cargarSoporte(ORDEN_ID, { size: PDF.length, buffer: PDF }, usuario(), CONTEXTO);
+
+      expect(e.notificaciones.notificarUsuario).toHaveBeenCalledTimes(1);
+      expect(e.notificaciones.notificarUsuario).toHaveBeenCalledWith(
+        'u-tes',
+        expect.objectContaining({
+          titulo: expect.stringContaining('OP-2026-000001'),
+          cuerpo: expect.stringMatching(/Ana Pérez.*OP-2026-000001.*\$ 350\.000.*SOL-2026-0042/),
+        }),
+      );
+      expect(e.notificaciones.enviarCorreo).toHaveBeenCalledTimes(1);
+      expect(e.notificaciones.enviarCorreo).toHaveBeenCalledWith(
+        'recaudo@uniputumayo.edu.co',
+        expect.objectContaining({
+          titulo: expect.stringContaining('OP-2026-000001'),
+          cuerpo: expect.stringMatching(/Ana Pérez.*OP-2026-000001.*\$ 350\.000.*SOL-2026-0042/),
+        }),
+      );
+    });
+
+    it('si PAGO_CORREO_AREA está vacío solo notifica a los usuarios de tesorería', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(pendiente());
+      e.parametros.obtenerTexto.mockResolvedValue('   ');
+
+      await e.servicio.cargarSoporte(ORDEN_ID, { size: PDF.length, buffer: PDF }, usuario(), CONTEXTO);
+
+      expect(e.notificaciones.notificarUsuario).toHaveBeenCalledTimes(1);
+      expect(e.notificaciones.enviarCorreo).not.toHaveBeenCalled();
+    });
+
+    it('un fallo al notificar o enviar correo registra warn y no tumba la carga del soporte', async () => {
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(pendiente());
+      e.parametros.obtenerTexto.mockResolvedValue('recaudo@uniputumayo.edu.co');
+      e.notificaciones.notificarUsuario.mockRejectedValueOnce(new Error('fallo notificación'));
+      e.notificaciones.enviarCorreo.mockRejectedValueOnce(new Error('SMTP caído'));
+
+      const resultado = await e.servicio.cargarSoporte(
+        ORDEN_ID,
+        { size: PDF.length, buffer: PDF },
+        usuario(),
+        CONTEXTO,
+      );
+
+      expect(resultado).toMatchObject({ estado: 'EN_VERIFICACION', tieneSoporte: true });
+      expect(e.almacenamiento.eliminar).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledOnce();
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe('instrucciones', () => {
+    const ordenConSolicitud = (cambios: Record<string, unknown> = {}) =>
+      orden({
+        valor: 1_234_567,
+        cotizacion: {
+          esExenta: false,
+          solicitud: {
+            consecutivo: 'SOL-2026-0015',
+            esExenta: false,
+            solicitante: {
+              usuarioId: 'u-1',
+              nombres: 'Ana',
+              apellidos: 'Pérez',
+              razonSocial: null,
+            },
+          },
+        },
+        ...cambios,
+      });
+
+    it.each(['PENDIENTE', 'RECHAZADA', 'EN_VERIFICACION'] as const)(
+      'devuelve instrucciones y enlace wa.me codificado para una orden %s',
+      async (estadoPermitido) => {
+        const e = crearEntorno();
+        e.prisma.ordenPago.findFirst.mockResolvedValue(ordenConSolicitud({ estado: estadoPermitido }));
+        e.parametros.obtenerTexto.mockImplementation(async (clave: string) => {
+          if (clave === 'PAGO_ENLACE_URL') return 'https://recaudo.uniputumayo.edu.co/pse';
+          if (clave === 'PAGO_INSTRUCCIONES') return 'Paga con la referencia y sube el comprobante.';
+          if (clave === 'PAGO_WHATSAPP_AREA') return '573001234567';
+          return '';
+        });
+
+        const r = await e.servicio.instrucciones(ORDEN_ID, usuario());
+        const mensajeEsperado =
+          'Hola, soy Ana Pérez. Realicé el pago de la orden OP-2026-000001 por $ 1.234.567 de la solicitud SOL-2026-0015. Ya cargué el comprobante en SIRA.';
+
+        expect(r).toEqual({
+          ordenPagoId: ORDEN_ID,
+          referencia: 'OP-2026-000001',
+          valor: 1_234_567,
+          tipo: 'TOTAL',
+          estado: estadoPermitido,
+          venceEn: '2026-10-24T15:00:00.000Z',
+          enlacePago: 'https://recaudo.uniputumayo.edu.co/pse',
+          instrucciones: 'Paga con la referencia y sube el comprobante.',
+          pasarelaEnLinea: false,
+          whatsapp: {
+            numero: '573001234567',
+            url: `https://wa.me/573001234567?text=${encodeURIComponent(mensajeEsperado)}`,
+          },
+        });
+      },
+    );
+
+    it('devuelve whatsapp null y campos anulables cuando los parámetros están vacíos', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(ordenConSolicitud());
+      e.parametros.obtenerTexto.mockResolvedValue('   ');
+
+      const r = await e.servicio.instrucciones(ORDEN_ID, usuario());
+
+      expect(r.enlacePago).toBeNull();
+      expect(r.instrucciones).toBeNull();
+      expect(r.whatsapp).toBeNull();
+      expect(r.pasarelaEnLinea).toBe(false);
+    });
+
+    it('informa pasarelaEnLinea=true solo cuando PASARELA_PROVEEDOR es distinto de ninguna', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(ordenConSolicitud());
+      e.config.get.mockImplementation((clave: string) => (clave === 'PASARELA_PROVEEDOR' ? 'wompi' : undefined));
+
+      const activa = await e.servicio.instrucciones(ORDEN_ID, usuario());
+      expect(activa.pasarelaEnLinea).toBe(true);
+
+      e.config.get.mockImplementation((clave: string) => (clave === 'PASARELA_PROVEEDOR' ? 'ninguna' : undefined));
+      const inactiva = await e.servicio.instrucciones(ORDEN_ID, usuario());
+      expect(inactiva.pasarelaEnLinea).toBe(false);
+    });
+
+    it('rechaza con 409 SOLICITUD_EXENTA si la solicitud o cotización es exenta', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(
+        ordenConSolicitud({
+          cotizacion: {
+            esExenta: false,
+            solicitud: {
+              consecutivo: 'SOL-2026-0015',
+              esExenta: true,
+              solicitante: { usuarioId: 'u-1', nombres: 'Ana', apellidos: 'Pérez', razonSocial: null },
+            },
+          },
+        }),
+      );
+
+      await expect(e.servicio.instrucciones(ORDEN_ID, usuario())).rejects.toMatchObject({
+        codigo: 'SOLICITUD_EXENTA',
+        status: 409,
+      });
+    });
+
+    it.each(['APROBADA', 'VENCIDA', 'ANULADA'] as const)(
+      'rechaza con 409 ORDEN_NO_PERMITIDA cuando la orden está en estado %s',
+      async (estadoNoPermitido) => {
+        const e = crearEntorno();
+        e.prisma.ordenPago.findFirst.mockResolvedValue(ordenConSolicitud({ estado: estadoNoPermitido }));
+
+        await expect(e.servicio.instrucciones(ORDEN_ID, usuario())).rejects.toMatchObject({
+          codigo: 'ORDEN_NO_PERMITIDA',
+          status: 409,
+        });
+      },
+    );
+
+    it('permite consultar a tesorería o administración y responde 404 si no existe o es de otro usuario', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findFirst.mockResolvedValue(ordenConSolicitud());
+      await expect(e.servicio.instrucciones(ORDEN_ID, tesoreria)).resolves.toMatchObject({
+        ordenPagoId: ORDEN_ID,
+      });
+
+      e.prisma.ordenPago.findFirst.mockResolvedValue(null);
+      await expect(e.servicio.instrucciones(ORDEN_ID, usuario({ id: 'u-otro' }))).rejects.toMatchObject({
+        codigo: 'NO_ENCONTRADO',
+        status: 404,
+      });
+    });
+  });
+
+  describe('verificar', () => {
+    const enVerificacion = (cambios: Record<string, unknown> = {}) =>
+      orden({
+        estado: 'EN_VERIFICACION',
+        soporteUrl: 'pagos/x/y.pdf',
+        cotizacion: { solicitud: { id: SOLICITUD_ID, estado: 'PAGO_PENDIENTE', reservas: [{ id: 'r-1' }] } },
+        ...cambios,
+      });
+
+    it('aprobar confirma la orden, la solicitud y las franjas retenidas', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(enVerificacion());
+      const r = await e.servicio.verificar(ORDEN_ID, { resultado: 'APROBADA' }, tesoreria, CONTEXTO);
+
+      expect(r).toEqual({ estadoOrden: 'APROBADA', estadoSolicitud: 'CONFIRMADA' });
+      expect(e.tx.ordenPago.update).toHaveBeenCalledWith({
+        where: { id: ORDEN_ID },
+        data: expect.objectContaining({
+          estado: 'APROBADA',
+          pagadoEn: AHORA,
+          verificadaPorId: 'u-tes',
+          observacionTesoreria: null,
+        }),
+      });
+      expect(e.tx.solicitud.updateMany).toHaveBeenCalledWith({
+        where: { id: SOLICITUD_ID, estado: 'PAGO_PENDIENTE' },
+        data: { estado: 'CONFIRMADA', venceEn: null },
+      });
+      expect(e.tx.franjaOcupada.updateMany).toHaveBeenCalledWith({
+        where: { reservaItemId: { in: ['r-1'] }, estado: 'RETENIDA' },
+        data: { estado: 'CONFIRMADA', retenidaHasta: null },
+      });
+      expect(e.tx.bitacora.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ accion: 'PAGO_APROBADO', usuarioId: 'u-tes', correlacionId: 'corr-1' }),
+      });
+    });
+
+    it('la verificación de orden de servicio reutiliza la confirmación normal', async () => {
+      const e = crearEntorno(); e.prisma.ordenPago.findUnique.mockResolvedValue(enVerificacion({ medio: 'ORDEN_SERVICIO' }));
+      await expect(e.servicio.verificar(ORDEN_ID, { resultado: 'APROBADA' }, tesoreria, CONTEXTO)).resolves.toEqual({ estadoOrden: 'APROBADA', estadoSolicitud: 'CONFIRMADA' });
+      expect(e.tx.franjaOcupada.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('aprobar anticipo genera el saldo con el servicio compartido', async () => {
+      const e = crearEntorno(); e.prisma.ordenPago.findUnique.mockResolvedValue(enVerificacion({ tipo: 'ANTICIPO' }));
+      await e.servicio.verificar(ORDEN_ID, { resultado: 'APROBADA' }, tesoreria, CONTEXTO);
+      expect(e.parciales.asegurarSaldo).toHaveBeenCalledTimes(1);
+    });
+    it('aprobar saldo conserva CONFIRMADA sin repetir historial ni franjas', async () => {
+      const e = crearEntorno(); e.prisma.ordenPago.findUnique.mockResolvedValue(enVerificacion({ tipo: 'SALDO', cotizacion: { solicitud: { id: SOLICITUD_ID, estado: 'CONFIRMADA', reservas: [{ id: 'r-1' }] } } }));
+      await expect(e.servicio.verificar(ORDEN_ID, { resultado: 'APROBADA' }, tesoreria, CONTEXTO)).resolves.toMatchObject({ estadoOrden: 'APROBADA', estadoSolicitud: 'CONFIRMADA' });
+      expect(e.tx.historialEstadoSolicitud.create).not.toHaveBeenCalled(); expect(e.tx.franjaOcupada.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('avisa al solicitante del resultado de la verificación', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(enVerificacion());
+      await e.servicio.verificar(ORDEN_ID, { resultado: 'APROBADA' }, tesoreria, CONTEXTO);
+      expect(e.notificaciones.notificarSolicitante).toHaveBeenCalledWith(
+        SOLICITUD_ID,
+        expect.objectContaining({ titulo: expect.stringContaining('Pago confirmado') }),
+      );
+
+      await e.servicio.verificar(
+        ORDEN_ID,
+        { resultado: 'RECHAZADA', observacion: 'No coincide.' },
+        tesoreria,
+        CONTEXTO,
+      );
+      expect(e.notificaciones.notificarSolicitante).toHaveBeenLastCalledWith(
+        SOLICITUD_ID,
+        expect.objectContaining({ titulo: expect.stringContaining('Pago rechazado') }),
+      );
+    });
+
+    it('rechazar exige observación y deja la solicitud como estaba', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(enVerificacion());
+      const sinMotivo = await rechazo(
+        e.servicio.verificar(ORDEN_ID, { resultado: 'RECHAZADA', observacion: '  ' }, tesoreria, CONTEXTO),
+      );
+      expect(sinMotivo).toMatchObject({ codigo: 'MOTIVO_REQUERIDO', status: 422 });
+
+      const r = await e.servicio.verificar(
+        ORDEN_ID,
+        { resultado: 'RECHAZADA', observacion: 'El valor no coincide.' },
+        tesoreria,
+        CONTEXTO,
+      );
+      expect(r).toEqual({ estadoOrden: 'RECHAZADA', estadoSolicitud: 'PAGO_PENDIENTE' });
+      expect(e.tx.solicitud.update).not.toHaveBeenCalled();
+      expect(e.tx.franjaOcupada.updateMany).not.toHaveBeenCalled();
+      expect(e.tx.bitacora.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ accion: 'PAGO_RECHAZADO' }),
+      });
+    });
+
+    it('una solicitud que ya no está en PAGO_PENDIENTE da 409 TRANSICION_INVALIDA y no un error 500', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(
+        enVerificacion({
+          cotizacion: { solicitud: { id: SOLICITUD_ID, estado: 'CANCELADA', reservas: [{ id: 'r-1' }] } },
+        }),
+      );
+      const error = await rechazo(e.servicio.verificar(ORDEN_ID, { resultado: 'APROBADA' }, tesoreria, CONTEXTO));
+      expect(error).toMatchObject({ codigo: 'TRANSICION_INVALIDA', status: 409 });
+      expect(e.tx.franjaOcupada.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('si la solicitud cambió de estado durante la verificación, no se confirma nada', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(enVerificacion());
+      e.tx.solicitud.updateMany.mockResolvedValue({ count: 0 });
+      const error = await rechazo(e.servicio.verificar(ORDEN_ID, { resultado: 'APROBADA' }, tesoreria, CONTEXTO));
+      expect(error).toMatchObject({ codigo: 'TRANSICION_INVALIDA', status: 409 });
+      expect(e.tx.franjaOcupada.updateMany).not.toHaveBeenCalled();
+      expect(e.notificaciones.notificarSolicitante).not.toHaveBeenCalled();
+    });
+
+    it('si otra verificación resolvió la orden a la vez, esta no confirma nada', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(enVerificacion());
+      e.tx.ordenPago.updateMany.mockResolvedValue({ count: 0 });
+      const error = await rechazo(e.servicio.verificar(ORDEN_ID, { resultado: 'APROBADA' }, tesoreria, CONTEXTO));
+
+      expect(error).toMatchObject({ codigo: 'ORDEN_NO_VERIFICABLE', status: 409 });
+      expect(e.tx.solicitud.update).not.toHaveBeenCalled();
+      expect(e.tx.franjaOcupada.updateMany).not.toHaveBeenCalled();
+      expect(e.notificaciones.notificarSolicitante).not.toHaveBeenCalled();
+    });
+
+    it('una orden que no está en verificación responde 409 ORDEN_NO_VERIFICABLE', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(enVerificacion({ estado: 'PENDIENTE' }));
+      const error = await rechazo(e.servicio.verificar(ORDEN_ID, { resultado: 'APROBADA' }, tesoreria, CONTEXTO));
+      expect(error).toMatchObject({ codigo: 'ORDEN_NO_VERIFICABLE', status: 409 });
+    });
+
+    it('una orden inexistente responde 404', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(null);
+      const error = await rechazo(e.servicio.verificar(ORDEN_ID, { resultado: 'APROBADA' }, tesoreria, CONTEXTO));
+      expect(error).toMatchObject({ codigo: 'NO_ENCONTRADO', status: 404 });
+    });
+  });
+
+  describe('registrarPagoTardio', () => {
+    const vencida = (cambios: Record<string, unknown> = {}) =>
+      orden({
+        estado: 'VENCIDA',
+        cotizacion: {
+          solicitud: {
+            id: SOLICITUD_ID,
+            estado: 'VENCIDA',
+            consecutivo: 'SOL-2026-0001',
+            reservas: [{ id: 'r-1' }],
+          },
+        },
+        ...cambios,
+      });
+    const franja = {
+      id: 'f-1',
+      espacioId: 'esp-1',
+      inicio: new Date('2026-11-03T12:30:00.000Z'),
+      fin: new Date('2026-11-03T17:15:00.000Z'),
+    };
+
+    it('con las franjas libres las vuelve a ocupar y confirma la solicitud', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(vencida());
+      e.prisma.franjaOcupada.findMany.mockResolvedValue([franja]);
+      const r = await e.servicio.registrarPagoTardio(
+        ORDEN_ID,
+        { observacion: ' Extracto del 27. ' },
+        tesoreria,
+        CONTEXTO,
+      );
+
+      expect(r).toEqual({ resultado: 'CONFIRMADA', estadoSolicitud: 'CONFIRMADA', valorReembolso: null });
+      expect(e.tx.ordenPago.updateMany).toHaveBeenCalledWith({
+        where: { id: ORDEN_ID, estado: 'VENCIDA' },
+        data: expect.objectContaining({
+          estado: 'APROBADA',
+          verificadaPorId: 'u-tes',
+          observacionTesoreria: 'Extracto del 27.',
+        }),
+      });
+      expect(e.tx.franjaOcupada.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['f-1'] } },
+        data: { estado: 'CONFIRMADA', retenidaHasta: null },
+      });
+      expect(e.tx.solicitud.updateMany).toHaveBeenCalledWith({
+        where: { id: SOLICITUD_ID, estado: 'VENCIDA' },
+        data: { estado: 'CONFIRMADA', venceEn: null },
+      });
+      expect(e.tx.reembolso.create).not.toHaveBeenCalled();
+      expect(e.tx.bitacora.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ accion: 'PAGO_TARDIO_CONFIRMADO' }),
+      });
+      expect(e.notificaciones.notificarSolicitante).toHaveBeenCalledWith(
+        SOLICITUD_ID,
+        expect.objectContaining({ titulo: expect.stringContaining('Pago confirmado') }),
+      );
+    });
+
+    it('si el horario ya fue tomado marca el reembolso total y avisa a tesorería sin confirmar', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(vencida());
+      e.prisma.franjaOcupada.findMany.mockResolvedValue([franja]);
+      e.prisma.franjaOcupada.findFirst.mockResolvedValue({ id: 'otra' });
+      const r = await e.servicio.registrarPagoTardio(ORDEN_ID, {}, tesoreria, CONTEXTO);
+
+      expect(r).toEqual({ resultado: 'REEMBOLSO', estadoSolicitud: 'VENCIDA', valorReembolso: 350_000 });
+      expect(e.tx.reembolso.create).toHaveBeenCalledWith({
+        data: { ordenPagoId: ORDEN_ID, valor: 350_000, motivo: 'PAGO_TARDIO_SIN_FRANJA_LIBRE' },
+      });
+      expect(e.tx.solicitud.update).not.toHaveBeenCalled();
+      expect(e.tx.franjaOcupada.updateMany).not.toHaveBeenCalled();
+      expect(e.notificaciones.notificarSolicitante).toHaveBeenCalledWith(
+        SOLICITUD_ID,
+        expect.objectContaining({ titulo: expect.stringContaining('Reembolso') }),
+      );
+      expect(e.notificaciones.notificarUsuario).toHaveBeenCalledTimes(1);
+      expect(e.notificaciones.notificarUsuario).toHaveBeenCalledWith('u-tes', expect.anything());
+    });
+
+    it('sin franjas que restaurar también termina en reembolso', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(vencida());
+      const r = await e.servicio.registrarPagoTardio(ORDEN_ID, {}, tesoreria, CONTEXTO);
+      expect(r.resultado).toBe('REEMBOLSO');
+    });
+
+    it.each([
+      ['una orden que no está vencida', orden({ estado: 'PENDIENTE' })],
+      [
+        'una solicitud que no está vencida',
+        vencida({ cotizacion: { solicitud: { id: SOLICITUD_ID, estado: 'CONFIRMADA', reservas: [] } } }),
+      ],
+    ])('sobre %s responde 409 PAGO_TARDIO_NO_APLICA', async (_caso, fila) => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(
+        'cotizacion' in (fila as object)
+          ? fila
+          : { ...(fila as object), cotizacion: { solicitud: { id: SOLICITUD_ID, estado: 'VENCIDA', reservas: [] } } },
+      );
+      const error = await rechazo(e.servicio.registrarPagoTardio(ORDEN_ID, {}, tesoreria, CONTEXTO));
+      expect(error).toMatchObject({ codigo: 'PAGO_TARDIO_NO_APLICA', status: 409 });
+      expect(e.prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('si otra persona resolvió la orden a la vez, no escribe nada', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(vencida());
+      e.prisma.franjaOcupada.findMany.mockResolvedValue([franja]);
+      e.tx.ordenPago.updateMany.mockResolvedValue({ count: 0 });
+      const error = await rechazo(e.servicio.registrarPagoTardio(ORDEN_ID, {}, tesoreria, CONTEXTO));
+      expect(error).toMatchObject({ codigo: 'PAGO_TARDIO_NO_APLICA', status: 409 });
+      expect(e.tx.franjaOcupada.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('una orden inexistente responde 404', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(null);
+      const error = await rechazo(e.servicio.registrarPagoTardio(ORDEN_ID, {}, tesoreria, CONTEXTO));
+      expect(error).toMatchObject({ codigo: 'NO_ENCONTRADO', status: 404 });
+    });
+  });
+
+  describe('listar y descargarSoporte', () => {
+    it('lista paginada con el consecutivo de la solicitud y sin exponer la ruta del soporte', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.count.mockResolvedValue(1);
+      e.prisma.ordenPago.findMany.mockResolvedValue([
+        {
+          ...orden({ soporteUrl: 'pagos/x.pdf' }),
+          cotizacion: { solicitudId: SOLICITUD_ID, solicitud: { consecutivo: 'SOL-2026-0001' } },
+        },
+      ]);
+      const r = await e.servicio.listar({ estado: 'PENDIENTE', pagina: 1, porPagina: 20 });
+
+      expect(e.prisma.ordenPago.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { estado: 'PENDIENTE' }, skip: 0, take: 20 }),
+      );
+      expect(r.total).toBe(1);
+      expect(r.datos[0]).toMatchObject({
+        referencia: 'OP-2026-000001',
+        consecutivoSolicitud: 'SOL-2026-0001',
+        tieneSoporte: true,
+      });
+      expect(r.datos[0]).not.toHaveProperty('soporteUrl');
+    });
+
+    it('tesorería descarga cualquier soporte; el solicitante solo el suyo', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(orden({ soporteUrl: 'pagos/x.pdf' }));
+      await expect(e.servicio.descargarSoporte(ORDEN_ID, tesoreria)).resolves.toMatchObject({
+        tipoMime: 'application/pdf',
+        nombre: 'OP-2026-000001.pdf',
+      });
+
+      e.prisma.ordenPago.findFirst.mockResolvedValue(null);
+      await expect(rechazo(e.servicio.descargarSoporte(ORDEN_ID, usuario()))).resolves.toMatchObject({
+        codigo: 'NO_ENCONTRADO',
+      });
+    });
+
+    it('una orden sin soporte responde 404', async () => {
+      const e = crearEntorno();
+      e.prisma.ordenPago.findUnique.mockResolvedValue(orden());
+      await expect(rechazo(e.servicio.descargarSoporte(ORDEN_ID, tesoreria))).resolves.toMatchObject({
+        codigo: 'NO_ENCONTRADO',
+      });
+    });
+  });
+
+  describe('listarReembolsos y resolverReembolso', () => {
+    it('aplica un reembolso con soporte y pasa la solicitud de CANCELADA a REEMBOLSADA (RF-PAG-10)', async () => {
+      const e = crearEntorno();
+      (e.tx as Record<string, unknown>).reembolso = {
+        create: vi.fn().mockResolvedValue({}),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      };
+      (e.prisma as Record<string, unknown>).reembolso = {
+        count: vi.fn().mockResolvedValue(1),
+        findMany: vi.fn().mockResolvedValue([]),
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'reem-1',
+          ordenPagoId: ORDEN_ID,
+          valor: 180_000,
+          motivo: 'Cancelación con antelación',
+          estado: 'SOLICITADO',
+          ordenPago: {
+            referencia: 'OP-2026-000001',
+            cotizacion: {
+              solicitud: { id: SOLICITUD_ID, consecutivo: 'SOL-2026-0285', estado: 'CANCELADA' },
+            },
+          },
+        }),
+      };
+
+      const r = await e.servicio.resolverReembolso(
+        'reem-1',
+        { resultado: 'APLICADO' },
+        { size: PDF.length, buffer: PDF },
+        tesoreria,
+        CONTEXTO,
+      );
+
+      expect(r).toEqual({
+        estadoReembolso: 'APLICADO',
+        estadoSolicitud: 'REEMBOLSADA',
+      });
+      expect(e.tx.solicitud.update).toHaveBeenCalledWith({
+        where: { id: SOLICITUD_ID },
+        data: { estado: 'REEMBOLSADA' },
+      });
+      expect(e.notificaciones.notificarSolicitante).toHaveBeenCalledWith(
+        SOLICITUD_ID,
+        expect.objectContaining({ titulo: expect.stringContaining('Reembolso aplicado') }),
+      );
+    });
+  });
+});

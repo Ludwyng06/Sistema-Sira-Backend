@@ -1,7 +1,13 @@
 # aprobaciones
 
-aval, aprobación, escalamiento
+Aval, aprobación, devolución y reclasificación de solicitudes (UC-02).
 
-Responsable: Jensen Ordóñez (semana 2)
+Este módulo no tiene código propio: las decisiones comparten la máquina de estados, las franjas y la bitácora
+con el resto del ciclo de la solicitud, y deben cambiar el estado en la misma transacción. Por eso viven en
+`modules/reservas`:
 
-Estado: sin código (Fase 0). Se construye siguiendo el plan `docs/architecture/08-plan-de-trabajo-20-dias.md` y la estructura de `modules/inventario`.
+- `POST /solicitudes/:id/decisiones` → `reservas/controllers/solicitudes.controller.ts`
+- Reglas → `reservas/services/decisiones.service.ts`
+- Recordatorios y escalamiento al aprobador → `reservas/jobs/recordatorios.service.ts`
+
+La carpeta se conserva para que `03-backend.md` §1 siga mostrando el contexto del dominio.
