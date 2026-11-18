@@ -72,6 +72,16 @@ describe('conservaForma', () => {
 });
 
 describe('ParametrosAdminService', () => {
+  it('permite anticipo desactivado o decimal de hasta dos cifras y valida los días de saldo', async () => {
+    const e = crearEntorno(existente('PORCENTAJE_ANTICIPO', 0));
+    await expect(e.servicio.actualizar('PORCENTAJE_ANTICIPO', 33.33, admin, CONTEXTO)).resolves.toMatchObject({ valor: 33.33 });
+    await expect(e.servicio.actualizar('PORCENTAJE_ANTICIPO', 0, admin, CONTEXTO)).resolves.toMatchObject({ valor: 0 });
+    await expect(e.servicio.actualizar('PORCENTAJE_ANTICIPO', 101, admin, CONTEXTO)).rejects.toMatchObject({ codigo: 'PARAMETRO_INVALIDO' });
+    await expect(e.servicio.actualizar('PORCENTAJE_ANTICIPO', 1.234, admin, CONTEXTO)).rejects.toMatchObject({ codigo: 'PARAMETRO_INVALIDO' });
+    const dias = crearEntorno(existente('DIAS_SALDO_ANTES_EVENTO', 3));
+    await expect(dias.servicio.actualizar('DIAS_SALDO_ANTES_EVENTO', 0, admin, CONTEXTO)).resolves.toMatchObject({ valor: 0 });
+    await expect(dias.servicio.actualizar('DIAS_SALDO_ANTES_EVENTO', 366, admin, CONTEXTO)).rejects.toMatchObject({ codigo: 'PARAMETRO_INVALIDO' });
+  });
   it('lista los parámetros', async () => {
     const e = crearEntorno(null);
     await expect(e.servicio.listar()).resolves.toEqual([

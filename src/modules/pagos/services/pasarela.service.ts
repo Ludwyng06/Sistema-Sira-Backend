@@ -8,6 +8,7 @@ import { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import { transicionOConflicto } from '../../reservas/dominio/maquina-estados.js';
 import type { CheckoutPasarelaDto, EstadoPagoDto, EventoRecibidoDto } from '../dto/pasarela.dto.js';
 import { PASARELA, PASARELAS, type EventoInterpretado, type PasarelaSeleccionada, type RegistroPasarelas } from '../puertos/pasarela.port.js';
+import { PagosParcialesService } from './pagos-parciales.service.js';
 
 const ACCIONES_INTENTO = ['CHECKOUT_INICIADO', 'CHECKOUT_REINTENTADO'];
 const ESTADOS_REINTENTABLES: readonly string[] = ['RECHAZADA', 'ANULADA', 'ERROR'];
@@ -24,6 +25,7 @@ export class PasarelaService {
     private readonly config: ConfigService,
     @Inject(PASARELA) private readonly pasarela: PasarelaSeleccionada,
     @Inject(PASARELAS) private readonly adaptadores: RegistroPasarelas,
+    private readonly parciales: PagosParcialesService,
   ) {}
 
   private adaptador(proveedor: string) {
@@ -57,7 +59,7 @@ export class PasarelaService {
     }
     if ((orden.estado !== 'PENDIENTE' && !ESTADOS_REINTENTABLES.includes(orden.estado)) ||
         orden.soporteUrl || orden.venceEn <= new Date() || orden.valor <= 0 ||
-        orden.cotizacion.solicitud.estado !== 'PAGO_PENDIENTE') {
+        orden.cotizacion.solicitud.estado !== (orden.tipo === 'SALDO' ? 'CONFIRMADA' : 'PAGO_PENDIENTE')) {
       throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'Solo puedes pagar una orden pendiente o reintentable y vigente.', 409);
     }
     const retorno = new URL('/pagos/retorno', this.config.getOrThrow<string>('FRONTEND_URL'));
@@ -65,7 +67,7 @@ export class PasarelaService {
     return this.prisma.$transaction(async (tx) => {
       // Misma guarda por solicitud que los casos de pago manual y vencimiento.
       const solicitud = await tx.solicitud.updateMany({
-        where: { id: orden.cotizacion.solicitudId, estado: 'PAGO_PENDIENTE', esExenta: false },
+        where: { id: orden.cotizacion.solicitudId, estado: orden.tipo === 'SALDO' ? 'CONFIRMADA' : 'PAGO_PENDIENTE', esExenta: false },
         data: { actualizadoEn: new Date() },
       });
       if (!solicitud.count) throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'La solicitud cambió de estado.', 409);
@@ -86,6 +88,7 @@ export class PasarelaService {
         correoPagador: usuario.correo, urlRetorno: retorno.toString(), descripcion: `Orden ${actual.referencia}`,
       });
       const primeraApertura = actual.pasarela === null;
+      const extenderPlazo = primeraApertura && actual.tipo !== 'SALDO';
       const transaccionAnteriorId = actual.transaccionExternaId;
       const gracia = new Date(Math.max(actual.venceEn.getTime(), Date.now() + this.minutos('PASARELA_GRACIA_MINUTOS', 120) * 60_000));
       const cambio = await tx.ordenPago.updateMany({
@@ -94,10 +97,10 @@ export class PasarelaService {
           ...(!reintento && !actual.transaccionExternaId && checkout.transaccionExternaId
             ? { transaccionExternaId: checkout.transaccionExternaId } : {}),
           ...(reintento ? { estado: 'PENDIENTE' as const, transaccionExternaId: checkout.transaccionExternaId, pagadoEn: null } : {}),
-          ...(primeraApertura ? { venceEn: gracia } : {}) },
+          ...(extenderPlazo ? { venceEn: gracia } : {}) },
       });
       if (!cambio.count) throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'La orden cambió de estado.', 409);
-      if (primeraApertura) {
+      if (extenderPlazo) {
         await tx.solicitud.update({ where: { id: orden.cotizacion.solicitudId }, data: { venceEn: gracia } });
         await tx.franjaOcupada.updateMany({
           where: { reservaItem: { solicitudId: orden.cotizacion.solicitudId }, estado: 'RETENIDA' },
@@ -263,7 +266,9 @@ export class PasarelaService {
       if (estado === 'APROBADA') {
         const tardiaRecuperable = solicitud.estado === 'VENCIDA'
           ? await this.recuperarFranjas(tx, solicitud.reservas.map((r) => r.id)) : false;
-        if (solicitud.estado === 'PAGO_PENDIENTE' || tardiaRecuperable) {
+        if (orden.tipo === 'SALDO' && solicitud.estado === 'CONFIRMADA') {
+          confirmada = true; // Pagar el saldo no repite la transición ni los efectos del anticipo.
+        } else if (solicitud.estado === 'PAGO_PENDIENTE' || tardiaRecuperable) {
           const destino = transicionOConflicto(solicitud.estado,
             tardiaRecuperable ? 'CONFIRMAR_PAGO_TARDIO' : 'CONFIRMAR_PAGO');
           await tx.solicitud.update({ where: { id: solicitud.id }, data: { estado: destino, venceEn: null } });
@@ -288,6 +293,7 @@ export class PasarelaService {
               cuerpo: 'Pago recibido sin reserva recuperable; revisa el reembolso total solicitado.' } });
           }
         }
+        if (orden.tipo === 'ANTICIPO' && confirmada) await this.parciales.asegurarSaldo(tx, orden);
       }
       if (estado !== 'PENDIENTE') {
         await tx.bitacora.create({ data: { accion: `PAGO_PASARELA_${estado}`, entidad: 'OrdenPago', entidadId: orden.id,

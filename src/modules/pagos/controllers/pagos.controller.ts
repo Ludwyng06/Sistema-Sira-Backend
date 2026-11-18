@@ -49,12 +49,11 @@ export class PagosController {
 
   @Post()
   @ApiOperation({
-    summary: 'Genera la orden de pago por consignación de una solicitud cotizada (UC-03).',
+    summary: 'Genera o recupera la orden inicial o el saldo de una solicitud propia.',
     description:
-      'Crea la orden con su referencia OP- y devuelve la cuenta de recaudo. El valor es el total de la ' +
-      'cotización más el depósito de garantía. Si ya hay una orden pendiente, la devuelve. La solicitud pasa ' +
-      'a PAGO_PENDIENTE.\n\n' +
-      'Errores: 404 NO_ENCONTRADO; 409 ORDEN_NO_PERMITIDA o COTIZACION_VENCIDA; 422 SOLICITUD_EXENTA.',
+      'Referencia OP- y cuenta de recaudo. Con PORCENTAJE_ANTICIPO=0 cobra TOTAL; si está habilitado cobra ANTICIPO sobre cotización más depósito. ' +
+      'Tras aprobar el anticipo devuelve el SALDO pendiente sin cambiar la reserva confirmada. El cliente no envía importes ni tipo.\n\n' +
+      'Errores: 404 NO_ENCONTRADO; 409 ORDEN_NO_PERMITIDA, SALDO_VENCIDO o COTIZACION_VENCIDA; 422 SOLICITUD_EXENTA, ANTICIPO_SIN_VALOR o PARAMETRO_INVALIDO.',
   })
   @ApiCreatedResponse({ type: OrdenPagoDto })
   @ApiErrores(400, 401, 404, 409, 422)
@@ -70,6 +69,16 @@ export class PagosController {
       userAgent: userAgent ?? null,
       correlacionId: correlacionId ?? null,
     });
+  }
+
+  @Post(':id/saldo')
+  @ApiOperation({ summary: 'Obtiene o genera el saldo de un anticipo aprobado propio.',
+    description: 'Sin cuerpo; normalmente ya fue creado al aprobar el anticipo. Calcula la diferencia exacta y conserva el vencimiento congelado. Errores: 404 NO_ENCONTRADO; 409 ANTICIPO_NO_APROBADO, SALDO_VENCIDO u ORDEN_NO_PERMITIDA.' })
+  @ApiCreatedResponse({ type: OrdenPagoDto }) @ApiErrores(400, 401, 404, 409)
+  crearSaldo(@Param('id', new ParseUUIDPipe()) id: string, @UsuarioActual() usuario: UsuarioAutenticado,
+    @Ip() ip: string, @Headers('user-agent') userAgent: string | undefined,
+    @Headers('x-correlation-id') correlacionId: string | undefined): Promise<OrdenPagoDto> {
+    return this.servicio.crearSaldo(id, usuario, { ip, userAgent: userAgent ?? null, correlacionId: correlacionId ?? null });
   }
 
   @Post('orden-servicio')

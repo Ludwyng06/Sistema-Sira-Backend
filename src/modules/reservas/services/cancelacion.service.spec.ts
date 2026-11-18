@@ -29,12 +29,14 @@ const solicitud = (cambios: Record<string, unknown> = {}) => ({
   solicitanteId: 'sol-1',
   estado: 'CONFIRMADA',
   reservas: [{ id: 'r-1', inicio: new Date('2026-11-03T13:00:00.000Z') }],
-  cotizaciones: [{ total: 200_000, esExenta: false, ordenesPago: [{ id: 'op-1' }] }],
+  cotizaciones: [{ total: 200_000, esExenta: false, ordenesPago: [{ id: 'op-1', valor: 200_000, tipo: 'TOTAL' }] }],
   ...cambios,
 });
 
 function crearEntorno(fila: unknown = solicitud(), perfil: unknown = { id: 'sol-1' }) {
+  const pagos = (fila as { cotizaciones?: { ordenesPago?: unknown[] }[] } | null)?.cotizaciones?.flatMap((c) => c.ordenesPago ?? []) ?? [];
   const tx = {
+    ordenPago: { findMany: vi.fn().mockResolvedValue(pagos) },
     solicitud: {
       update: vi.fn().mockResolvedValue({}),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -42,7 +44,7 @@ function crearEntorno(fila: unknown = solicitud(), perfil: unknown = { id: 'sol-
     franjaOcupada: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     historialEstadoSolicitud: { create: vi.fn().mockResolvedValue({}) },
     bitacora: { create: vi.fn().mockResolvedValue({}) },
-    reembolso: { create: vi.fn().mockResolvedValue({}) },
+    reembolso: { create: vi.fn(async (args: { data: { ordenPagoId: string } }) => ({ id: `re-${args.data.ordenPagoId}` })) },
   };
   const prisma = {
     solicitante: { findUnique: vi.fn().mockResolvedValue(perfil) },
@@ -93,6 +95,20 @@ describe('CancelacionService.cancelar', () => {
     vi.setSystemTime(AHORA);
   });
   afterEach(() => vi.useRealTimers());
+  it('si solo se pagó anticipo reembolsa ese importe y no la cotización completa', async () => {
+    const e = crearEntorno(solicitud({ cotizaciones: [{ total: 200000, esExenta: false, ordenesPago: [{ id: 'a', valor: 30000, tipo: 'ANTICIPO' }] }] }));
+    const r = await e.servicio.cancelar(SOLICITUD_ID, { motivo: 'Cambio' }, usuario(), CONTEXTO);
+    expect(r.valorReembolso).toBe(30000);
+    expect(e.tx.reembolso.create).toHaveBeenCalledWith({ data: expect.objectContaining({ ordenPagoId: 'a', valor: 30000 }) });
+  });
+  it('distribuye saldo y anticipo en pesos exactos sobre los pagos releídos bajo bloqueo', async () => {
+    const e = crearEntorno(solicitud({ reservas: [{ id: 'r-1', inicio: new Date('2026-11-02T13:00:00Z') }],
+      cotizaciones: [{ total: 101, esExenta: false, ordenesPago: [{ id: 'a', valor: 51, tipo: 'ANTICIPO' }, { id: 's', valor: 50, tipo: 'SALDO' }] }] }));
+    const r = await e.servicio.cancelar(SOLICITUD_ID, { motivo: 'Cambio' }, usuario(), CONTEXTO);
+    expect(r.valorReembolso).toBe(51);
+    expect(e.tx.reembolso.create).toHaveBeenNthCalledWith(1, { data: expect.objectContaining({ ordenPagoId: 's', valor: 50 }) });
+    expect(e.tx.reembolso.create).toHaveBeenNthCalledWith(2, { data: expect.objectContaining({ ordenPagoId: 'a', valor: 1 }) });
+  });
 
   it('el dueño cancela: libera franjas, escribe historial y bitácora y reembolsa según la política', async () => {
     const e = crearEntorno();

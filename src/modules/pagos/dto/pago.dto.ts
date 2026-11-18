@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
-import { EstadoOrdenPago, EstadoReembolso, MedioPago } from '../../../generated/prisma/enums.js';
+import { EstadoOrdenPago, EstadoReembolso, MedioPago, TipoOrdenPago } from '../../../generated/prisma/enums.js';
 
 export class CrearOrdenPagoDto {
   @ApiProperty({ format: 'uuid', example: '6e1d8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b', description: 'Solicitud cotizada.' })
@@ -83,6 +83,8 @@ export class CuentaRecaudoDto {
 }
 
 export class OrdenPagoDto {
+  @ApiProperty({ enum: TipoOrdenPago, description: 'TOTAL conserva el flujo habitual; ANTICIPO asegura la reserva y SALDO completa el pago.' })
+  tipo!: TipoOrdenPago;
   @ApiProperty({ format: 'uuid' })
   id!: string;
 
@@ -120,6 +122,8 @@ export class OrdenServicioRespuestaDto extends OrdenPagoDto {
 }
 
 export class OrdenPagoResumenDto {
+  @ApiProperty({ enum: TipoOrdenPago }) tipo!: TipoOrdenPago;
+  @ApiProperty({ enum: MedioPago }) medio!: MedioPago;
   @ApiProperty({ format: 'uuid' })
   id!: string;
 

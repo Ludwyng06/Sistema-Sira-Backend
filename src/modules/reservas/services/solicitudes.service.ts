@@ -65,7 +65,7 @@ type FilaDetalle = Prisma.SolicitudGetPayload<{
     };
     servicios: { include: { servicio: { select: { nombre: true } } } };
     decisiones: true;
-    cotizaciones: true;
+    cotizaciones: { include: { ordenesPago: true } };
     actas: true;
   };
 }>;
@@ -85,6 +85,10 @@ function aDetalle(
   const cotizacion = fila.cotizaciones[0];
   return {
     ...aDto(fila),
+    ...(!fila.esExenta ? { ordenesPago: (cotizacion?.ordenesPago ?? []).map((o) => ({
+      id: o.id, referencia: o.referencia, tipo: o.tipo, medio: o.medio, estado: o.estado, valor: o.valor,
+      venceEn: o.venceEn.toISOString(), pagadoEn: o.pagadoEn?.toISOString() ?? null,
+    })) } : {}),
     reservas: fila.reservas.map((r) => ({
       id: r.id,
       espacioId: r.espacioId,
@@ -220,7 +224,7 @@ export class SolicitudesService {
         },
         servicios: { include: { servicio: { select: { nombre: true } } } },
         decisiones: { orderBy: { decididaEn: 'asc' } },
-        cotizaciones: { orderBy: { creadaEn: 'desc' }, take: 1 },
+        cotizaciones: { orderBy: { creadaEn: 'desc' }, take: 1, include: { ordenesPago: { orderBy: { creadaEn: 'asc' } } } },
         actas: { orderBy: { generadaEn: 'asc' } },
       },
     });
@@ -241,11 +245,20 @@ export class SolicitudesService {
       orderBy: { ocurrioEn: 'desc' },
       select: { datosDespues: true },
     });
-    const datos = cancelacion?.datosDespues as { porcentajeReembolso?: unknown } | null | undefined;
+    const datos = cancelacion?.datosDespues as { porcentajeReembolso?: unknown; reembolsoIds?: unknown } | null | undefined;
+    let valor = fila.valor; let estado = fila.estado;
+    if (Array.isArray(datos?.reembolsoIds) && datos.reembolsoIds.length && datos.reembolsoIds.every((id) => typeof id === 'string')) {
+      const partes = await this.prisma.reembolso.findMany({ where: { id: { in: datos.reembolsoIds as string[] }, ordenPago: { cotizacion: { solicitudId } } } });
+      if (partes.length) {
+        valor = partes.reduce((suma, parte) => suma + parte.valor, 0);
+        estado = partes.some((p) => p.estado === 'SOLICITADO') ? 'SOLICITADO'
+          : partes.every((p) => p.estado === 'APLICADO') ? 'APLICADO' : 'RECHAZADO';
+      }
+    }
     return {
-      valor: fila.valor,
+      valor,
       porcentaje: typeof datos?.porcentajeReembolso === 'number' ? datos.porcentajeReembolso : null,
-      estado: fila.estado,
+      estado,
       motivo: fila.motivo,
       creadoEn: fila.creadoEn.toISOString(),
     };

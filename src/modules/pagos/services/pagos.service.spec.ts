@@ -6,6 +6,7 @@ import type { ParametroService } from '../../../shared/parametros/parametro.serv
 import type { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import type { NotificacionesService } from '../../notificaciones/services/notificaciones.service.js';
 import { PagosService } from './pagos.service.js';
+import type { PagosParcialesService } from './pagos-parciales.service.js';
 
 const AHORA = new Date('2026-10-22T15:00:00.000Z');
 const SOLICITUD_ID = '6e1d8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b';
@@ -45,6 +46,7 @@ const orden = (cambios: Record<string, unknown> = {}) => ({
   referencia: 'OP-2026-000001',
   cotizacionId: 'cot-1',
   valor: 350_000,
+  tipo: 'TOTAL',
   medio: 'CONSIGNACION',
   estado: 'PENDIENTE',
   soporteUrl: null,
@@ -104,14 +106,17 @@ function crearEntorno(opciones: { solicitud?: unknown; perfil?: unknown } = {}) 
     notificarUsuario: vi.fn().mockResolvedValue(undefined),
     notificarAprobadores: vi.fn().mockResolvedValue(undefined),
   };
+  const parciales = { planInicial: vi.fn<(total: number, solicitudId: string) => Promise<{ tipo: 'TOTAL' | 'ANTICIPO'; anticipo: number; saldo: number; saldoVenceEn: Date | null }>>(
+    async (total) => ({ tipo: 'TOTAL', anticipo: total, saldo: 0, saldoVenceEn: null })), asegurarSaldo: vi.fn().mockResolvedValue(null) };
   const servicio = new PagosService(
     prisma as unknown as PrismaService,
     consecutivos as unknown as ConsecutivoService,
     parametros as unknown as ParametroService,
     almacenamiento as unknown as AlmacenamientoPort,
     notificaciones as unknown as NotificacionesService,
+    parciales as unknown as PagosParcialesService,
   );
-  return { servicio, notificaciones, prisma, tx, consecutivos, parametros, almacenamiento };
+  return { servicio, notificaciones, prisma, tx, consecutivos, parametros, almacenamiento, parciales };
 }
 
 const rechazo = (promesa: Promise<unknown>): Promise<unknown> => promesa.catch((e: unknown) => e);
@@ -144,6 +149,14 @@ describe('PagosService', () => {
     });
   });
 
+  it('al crear anticipo congela tipo, importe y vencimiento del saldo', async () => {
+    const e = crearEntorno(); const saldoVenceEn = new Date('2026-12-01T12:00:00Z');
+    e.parciales.planInicial.mockResolvedValue({ tipo: 'ANTICIPO', anticipo: 105000, saldo: 245000, saldoVenceEn });
+    const creada = await e.servicio.crearOrden(SOLICITUD_ID, usuario(), CONTEXTO);
+    expect(creada).toMatchObject({ tipo: 'ANTICIPO', valor: 105000 });
+    expect(e.tx.bitacora.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ datosDespues: expect.objectContaining({ saldoVenceEn: saldoVenceEn.toISOString() }) }) }));
+  });
+
   describe('crearOrden', () => {
     it('crea la orden OP- por cotización más depósito, deja PAGO_PENDIENTE y devuelve la cuenta', async () => {
       const e = crearEntorno();
@@ -156,6 +169,7 @@ describe('PagosService', () => {
           cotizacionId: 'cot-1',
           valor: 350_000,
           medio: 'CONSIGNACION',
+          tipo: 'TOTAL',
           venceEn: cotizacion.validaHasta,
         },
       });
@@ -376,6 +390,17 @@ describe('PagosService', () => {
       const e = crearEntorno(); e.prisma.ordenPago.findUnique.mockResolvedValue(enVerificacion({ medio: 'ORDEN_SERVICIO' }));
       await expect(e.servicio.verificar(ORDEN_ID, { resultado: 'APROBADA' }, tesoreria, CONTEXTO)).resolves.toEqual({ estadoOrden: 'APROBADA', estadoSolicitud: 'CONFIRMADA' });
       expect(e.tx.franjaOcupada.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('aprobar anticipo genera el saldo con el servicio compartido', async () => {
+      const e = crearEntorno(); e.prisma.ordenPago.findUnique.mockResolvedValue(enVerificacion({ tipo: 'ANTICIPO' }));
+      await e.servicio.verificar(ORDEN_ID, { resultado: 'APROBADA' }, tesoreria, CONTEXTO);
+      expect(e.parciales.asegurarSaldo).toHaveBeenCalledTimes(1);
+    });
+    it('aprobar saldo conserva CONFIRMADA sin repetir historial ni franjas', async () => {
+      const e = crearEntorno(); e.prisma.ordenPago.findUnique.mockResolvedValue(enVerificacion({ tipo: 'SALDO', cotizacion: { solicitud: { id: SOLICITUD_ID, estado: 'CONFIRMADA', reservas: [{ id: 'r-1' }] } } }));
+      await expect(e.servicio.verificar(ORDEN_ID, { resultado: 'APROBADA' }, tesoreria, CONTEXTO)).resolves.toMatchObject({ estadoOrden: 'APROBADA', estadoSolicitud: 'CONFIRMADA' });
+      expect(e.tx.historialEstadoSolicitud.create).not.toHaveBeenCalled(); expect(e.tx.franjaOcupada.updateMany).not.toHaveBeenCalled();
     });
 
     it('avisa al solicitante del resultado de la verificación', async () => {

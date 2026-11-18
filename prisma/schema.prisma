@@ -160,6 +160,12 @@ enum EstadoOrdenPago {
   ANULADA
 }
 
+enum TipoOrdenPago {
+  TOTAL
+  ANTICIPO
+  SALDO
+}
+
 enum EstadoReembolso {
   SOLICITADO
   APLICADO
@@ -868,6 +874,7 @@ model OrdenPago {
   cotizacionId         String          @map("cotizacion_id") @db.Uuid
   valor                Int
   medio                MedioPago
+  tipo                 TipoOrdenPago   @default(TOTAL)
   estado               EstadoOrdenPago @default(PENDIENTE)
   /// WOMPI | EPAYCO | BOLD | ECOLLECT | null
   pasarela             String?

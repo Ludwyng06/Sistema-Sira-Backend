@@ -97,7 +97,7 @@ export class ConciliacionService {
       await this.almacenamiento.guardar(`pagos/conciliacion/${fecha}.pdf`, contenido, 'application/pdf');
       const pendientes = await this.prisma.ordenPago.count({ where: { estado: { in: ['PENDIENTE', 'EN_VERIFICACION'] }, actualizadaEn: { lte: new Date(ahora.getTime() - 30 * 60_000) } } });
       const avisar = await this.prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`conciliacion-${fecha}`}))`;
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`conciliacion-${fecha}`}))::text`;
         if (await tx.bitacora.findFirst({ where: { accion: 'CONCILIACION_DIARIA', entidad: 'Conciliacion', entidadId: fecha } })) return false;
         await tx.bitacora.create({ data: { accion: 'CONCILIACION_DIARIA', entidad: 'Conciliacion', entidadId: fecha,
           datosDespues: { fecha, pendientesAntiguos: pendientes, diferencias: informe.diferencias.length, pdf: `pagos/conciliacion/${fecha}.pdf` } } });

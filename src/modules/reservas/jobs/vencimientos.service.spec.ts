@@ -129,7 +129,7 @@ describe('VencimientosService.ejecutar', () => {
 
     expect(r.ordenes).toBe(3);
     expect(e.prisma.ordenPago.updateMany).toHaveBeenCalledWith({
-      where: { estado: 'PENDIENTE', venceEn: { lte: AHORA } },
+      where: { estado: 'PENDIENTE', tipo: { not: 'SALDO' }, venceEn: { lte: AHORA } },
       data: { estado: 'VENCIDA' },
     });
   });

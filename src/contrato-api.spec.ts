@@ -87,6 +87,7 @@ describe('Contrato de la API completa (Swagger)', () => {
       'POST /api/solicitudes/{id}/documentos',
       'POST /api/pagos/ordenes',
       'POST /api/pagos/ordenes/orden-servicio',
+      'POST /api/pagos/ordenes/{id}/saldo',
       'POST /api/pagos/ordenes/{id}/verificacion',
       'GET /api/pagos/conciliacion',
       'POST /api/pagos/conciliacion/extracto',

@@ -17,6 +17,7 @@ import { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import { NotificacionesService } from '../../notificaciones/services/notificaciones.service.js';
 import { detectarTipoMime, EXTENSION_POR_TIPO } from '../../reservas/dominio/contenido-archivo.js';
 import { transicionOConflicto } from '../../reservas/dominio/maquina-estados.js';
+import { PagosParcialesService } from './pagos-parciales.service.js';
 import type {
   CuentaRecaudoDto,
   FiltrosOrdenesDto,
@@ -84,6 +85,7 @@ export class PagosService {
     private readonly parametros: ParametroService,
     @Inject(ALMACENAMIENTO) private readonly almacenamiento: AlmacenamientoPort,
     private readonly notificaciones: NotificacionesService,
+    private readonly parciales: PagosParcialesService,
   ) {}
 
   /** UC-03 paso 1. RN-08: una solicitud exenta no tiene pago. */
@@ -105,7 +107,8 @@ export class PagosService {
     }
     if (
       solicitud.estado !== EstadoSolicitud.COTIZADA &&
-      solicitud.estado !== EstadoSolicitud.PAGO_PENDIENTE
+      solicitud.estado !== EstadoSolicitud.PAGO_PENDIENTE &&
+      solicitud.estado !== EstadoSolicitud.CONFIRMADA
     ) {
       throw new ErrorDominio(
         'ORDEN_NO_PERMITIDA',
@@ -115,11 +118,23 @@ export class PagosService {
     }
     const cotizacion = solicitud.cotizaciones[0];
     const ahora = new Date();
-    if (!cotizacion || cotizacion.validaHasta <= ahora) {
+    if (!cotizacion || (solicitud.estado !== EstadoSolicitud.CONFIRMADA && cotizacion.validaHasta <= ahora)) {
       throw new ErrorDominio('COTIZACION_VENCIDA', 'La cotización venció. Solicita una nueva.', 409);
     }
 
     const cuenta = leerCuenta(await this.parametros.obtenerJson('cuenta_recaudo'));
+    if (solicitud.estado === EstadoSolicitud.CONFIRMADA) {
+      const anticipo = await this.prisma.ordenPago.findFirst({ where: { cotizacionId: cotizacion.id, tipo: 'ANTICIPO', estado: 'APROBADA' }, orderBy: { pagadoEn: 'asc' } });
+      if (!anticipo) throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'La solicitud ya está pagada o no tiene anticipo aprobado.', 409);
+      const saldo = await this.prisma.$transaction(async (tx) => {
+        const bloqueo = await tx.solicitud.updateMany({ where: { id: solicitudId, estado: 'CONFIRMADA' }, data: { actualizadoEn: new Date() } });
+        if (!bloqueo.count) throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'La solicitud cambió de estado.', 409);
+        return this.parciales.asegurarSaldo(tx, anticipo);
+      });
+      if (!saldo || saldo.estado !== 'PENDIENTE') throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'No hay un saldo pendiente de pago.', 409);
+      if (saldo.venceEn <= ahora) throw new ErrorDominio('SALDO_VENCIDO', 'El plazo para pagar el saldo terminó.', 409);
+      return this.aDto(saldo, cuenta);
+    }
     const activa = await this.prisma.ordenPago.findFirst({
       where: { cotizacionId: cotizacion.id, estado: { in: ESTADOS_ACTIVOS } },
       orderBy: { creadaEn: 'desc' },
@@ -133,14 +148,17 @@ export class PagosService {
       );
     }
 
-    const valor = cotizacion.total + cotizacion.depositoGarantia;
-    if (valor <= 0) {
+    const total = cotizacion.total + cotizacion.depositoGarantia;
+    if (total <= 0) {
       throw new ErrorDominio(
         'ORDEN_SIN_VALOR',
         'Esta solicitud no tiene un valor a pagar. Comunícate con la administración.',
         422,
       );
     }
+    const plan = await this.parciales.planInicial(total, solicitudId);
+    const valor = plan.anticipo;
+    if (valor > 2147483647 || plan.saldo > 2147483647) throw new ErrorDominio('VALOR_INVALIDO', 'El pago excede el rango permitido de pesos enteros.', 422);
     const orden = await this.prisma.$transaction(async (tx) => {
       // Guarda de concurrencia: la fila de la solicitud se bloquea hasta el commit, así que dos
       // peticiones simultáneas no pueden crear dos órdenes de la misma cotización.
@@ -171,6 +189,7 @@ export class PagosService {
           cotizacionId: cotizacion.id,
           valor,
           medio: MedioPago.CONSIGNACION,
+          tipo: plan.tipo,
           venceEn: cotizacion.validaHasta,
         },
       });
@@ -194,12 +213,19 @@ export class PagosService {
           ip: contexto.ip,
           userAgent: contexto.userAgent,
           correlacionId: contexto.correlacionId,
-          datosDespues: { referencia, valor, solicitudId },
+          datosDespues: { referencia, valor, solicitudId, tipo: plan.tipo, saldoVenceEn: plan.saldoVenceEn?.toISOString() ?? null },
         },
       });
       return creada;
     });
     return this.aDto(orden, cuenta);
+  }
+
+  async crearSaldo(anticipoId: string, usuario: UsuarioAutenticado, contexto: ContextoPago): Promise<OrdenPagoDto> {
+    const anticipo = await this.prisma.ordenPago.findFirst({ where: { id: anticipoId, cotizacion: { solicitud: { solicitante: { usuarioId: usuario.id } } } }, include: { cotizacion: true } });
+    if (!anticipo) throw noEncontrado('La orden de pago');
+    if (anticipo.tipo !== 'ANTICIPO' || anticipo.estado !== 'APROBADA') throw new ErrorDominio('ANTICIPO_NO_APROBADO', 'Solo un anticipo aprobado permite generar saldo.', 409);
+    return this.crearOrden(anticipo.cotizacion.solicitudId, usuario, contexto);
   }
 
   /** UC-03 paso 2: el solicitante carga el comprobante y la orden pasa a verificación. */
@@ -328,6 +354,9 @@ export class PagosService {
     const solicitud = orden.cotizacion.solicitud;
     const ahora = new Date();
     const resultado = await this.prisma.$transaction(async (tx) => {
+      // Mismo orden de bloqueo que pasarelas y Cron de saldo: solicitud, luego orden.
+      const bloqueo = await tx.solicitud.updateMany({ where: { id: solicitud.id, estado: solicitud.estado }, data: { actualizadoEn: ahora } });
+      if (!bloqueo.count) throw new ErrorDominio('TRANSICION_INVALIDA', 'La solicitud cambió de estado.', 409);
       // Guarda de concurrencia: solo una verificación puede resolver la orden.
       const { count } = await tx.ordenPago.updateMany({
         where: { id: ordenId, estado: EstadoOrdenPago.EN_VERIFICACION },
@@ -342,8 +371,10 @@ export class PagosService {
       }
       let estadoSolicitud: EstadoSolicitud = solicitud.estado;
       if (datos.resultado === 'APROBADA') {
-        const destino = transicionOConflicto(solicitud.estado, 'CONFIRMAR_PAGO');
-        const confirmada = await tx.solicitud.updateMany({
+        const esSaldo = orden.tipo === 'SALDO';
+        if (esSaldo && solicitud.estado !== 'CONFIRMADA') throw new ErrorDominio('TRANSICION_INVALIDA', 'El saldo requiere una reserva confirmada por anticipo.', 409);
+        const destino = esSaldo ? solicitud.estado : transicionOConflicto(solicitud.estado, 'CONFIRMAR_PAGO');
+        const confirmada = esSaldo ? { count: 1 } : await tx.solicitud.updateMany({
           where: { id: solicitud.id, estado: solicitud.estado },
           data: { estado: destino, venceEn: null },
         });
@@ -363,11 +394,11 @@ export class PagosService {
             observacionTesoreria: observacion || null,
           },
         });
-        await tx.franjaOcupada.updateMany({
+        if (!esSaldo) await tx.franjaOcupada.updateMany({
           where: { reservaItemId: { in: solicitud.reservas.map((r) => r.id) }, estado: 'RETENIDA' },
           data: { estado: 'CONFIRMADA', retenidaHasta: null },
         });
-        await tx.historialEstadoSolicitud.create({
+        if (!esSaldo) await tx.historialEstadoSolicitud.create({
           data: {
             solicitudId: solicitud.id,
             estadoAnterior: solicitud.estado,
@@ -376,6 +407,7 @@ export class PagosService {
             observacion: orden.referencia,
           },
         });
+        if (orden.tipo === 'ANTICIPO') await this.parciales.asegurarSaldo(tx, orden);
         estadoSolicitud = destino;
       } else {
         await tx.ordenPago.update({
@@ -469,6 +501,8 @@ export class PagosService {
     const observacion = datos.observacion?.trim() || null;
     const ahora = new Date();
     const resultado = await this.prisma.$transaction(async (tx): Promise<PagoTardioDto> => {
+      const bloqueo = await tx.solicitud.updateMany({ where: { id: solicitud.id, estado: 'VENCIDA' }, data: { actualizadoEn: ahora } });
+      if (!bloqueo.count) throw new ErrorDominio('PAGO_TARDIO_NO_APLICA', 'La solicitud cambió de estado.', 409);
       const { count } = await tx.ordenPago.updateMany({
         where: { id: ordenId, estado: EstadoOrdenPago.VENCIDA },
         data: {
@@ -520,6 +554,7 @@ export class PagosService {
             datosDespues: { referencia: orden.referencia, valor: orden.valor, solicitudId: solicitud.id },
           },
         });
+        if (orden.tipo === 'ANTICIPO') await this.parciales.asegurarSaldo(tx, orden);
         return { resultado: 'CONFIRMADA', estadoSolicitud: destino, valorReembolso: null };
       }
 
@@ -588,6 +623,8 @@ export class PagosService {
       solicitudId: f.cotizacion.solicitudId,
       consecutivoSolicitud: f.cotizacion.solicitud.consecutivo,
       valor: f.valor,
+      tipo: f.tipo,
+      medio: f.medio,
       estado: f.estado,
       tieneSoporte: f.soporteUrl !== null,
       venceEn: f.venceEn.toISOString(),
@@ -832,6 +869,7 @@ export class PagosService {
       id: orden.id,
       referencia: orden.referencia,
       valor: orden.valor,
+      tipo: orden.tipo,
       medio: orden.medio,
       estado: orden.estado,
       venceEn: orden.venceEn.toISOString(),

@@ -4,6 +4,7 @@ import type { UsuarioAutenticado } from '../../../shared/auth/decoradores.js';
 import type { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import type { EventoInterpretado, PasarelaPort, RegistroPasarelas } from '../puertos/pasarela.port.js';
 import { PasarelaService } from './pasarela.service.js';
+import type { PagosParcialesService } from './pagos-parciales.service.js';
 
 const usuario: UsuarioAutenticado = { id: 'usuario-1', correo: 'ana@ejemplo.com', roles: ['SOLICITANTE'],
   dependencias: [], correoVerificado: true, esInstitucional: false };
@@ -12,7 +13,7 @@ const evento: EventoInterpretado = { idEventoExterno: 'evento-1', referencia: 'O
 
 function entorno() {
   const solicitud = { id: 'solicitud-1', estado: 'PAGO_PENDIENTE', esExenta: false, solicitanteId: 'perfil-1', reservas: [{ id: 'reserva-1' }] };
-  const orden = { id: 'orden-1', referencia: evento.referencia, valor: 350000, estado: 'PENDIENTE', medio: 'PASARELA',
+  const orden = { id: 'orden-1', referencia: evento.referencia, tipo: 'TOTAL', valor: 350000, estado: 'PENDIENTE', medio: 'PASARELA',
     pasarela: 'WOMPI' as string | null, transaccionExternaId: null as string | null, pagadoEn: null,
     soporteUrl: null, venceEn: new Date(Date.now() + 3600_000),
     cotizacion: { solicitudId: solicitud.id, esExenta: false, solicitud } };
@@ -63,13 +64,24 @@ function entorno() {
   const wompi = { interpretarEvento: pasarela.interpretarEvento, consultarTransaccion: vi.fn().mockResolvedValue({ ...evento }),
     consultarPorReferencia: vi.fn().mockResolvedValue({ ...evento }) };
   const adaptadores = new Map<string, PasarelaPort>([['WOMPI', { ...pasarela, ...wompi } as unknown as PasarelaPort]]);
+  const parciales = { asegurarSaldo: vi.fn().mockResolvedValue(null) };
   const servicio = new PasarelaService(prisma as unknown as PrismaService,
     new ConfigService({ FRONTEND_URL: 'http://localhost:3000', WOMPI_AMBIENTE: 'test' }), pasarela as unknown as PasarelaPort,
-    adaptadores as RegistroPasarelas);
-  return { servicio, prisma, tx, orden, solicitud, pasarela, wompi, registros, adaptadores };
+    adaptadores as RegistroPasarelas, parciales as unknown as PagosParcialesService);
+  return { servicio, prisma, tx, orden, solicitud, pasarela, wompi, registros, adaptadores, parciales };
 }
 
 describe('PasarelaService', () => {
+  it('un anticipo aprobado por webhook genera saldo en la misma transacción', async () => {
+    const e = entorno(); e.orden.tipo = 'ANTICIPO'; await e.servicio.aplicar(evento, 'anticipo-1');
+    expect(e.parciales.asegurarSaldo).toHaveBeenCalledTimes(1);
+  });
+  it('un saldo aprobado por webhook conserva la reserva sin reembolso ni nueva transición', async () => {
+    const e = entorno(); e.orden.tipo = 'SALDO'; e.solicitud.estado = 'CONFIRMADA';
+    await e.servicio.aplicar(evento, 'saldo-1');
+    expect(e.orden.estado).toBe('APROBADA'); expect(e.tx.reembolso.create).not.toHaveBeenCalled();
+    expect(e.tx.historialEstadoSolicitud.create).not.toHaveBeenCalled(); expect(e.tx.franjaOcupada.updateMany).not.toHaveBeenCalled();
+  });
   it('reabrir un intento pendiente reutiliza el checkout guardado sin crear otra sesión', async () => {
     const e = entorno();
     const primero = await e.servicio.iniciar('orden-1', usuario);

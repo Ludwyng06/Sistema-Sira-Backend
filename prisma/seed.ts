@@ -24,6 +24,8 @@ async function parametros() {
     ['horas_recordatorio_aprobador', 24, 'Horas para recordar al aprobador.'],
     ['horas_escalamiento_aprobador', 48, 'Horas para escalar la revisión.'],
     ['horas_plazo_pago', 48, 'Plazo de pago desde que queda cotizada (RN-02b).'],
+    ['PORCENTAJE_ANTICIPO', 0, 'Porcentaje inicial de anticipo; 0 desactiva pagos parciales.'],
+    ['DIAS_SALDO_ANTES_EVENTO', 3, 'Días calendario de anticipación del saldo antes del evento.'],
     ['minutos_gracia_pago_pendiente', 120, 'Gracia para pagos con transacción pendiente (RN-02c).'],
     [
       'politica_cancelacion',

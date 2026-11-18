@@ -78,7 +78,7 @@ export class SimuladorAdapter implements PasarelaPort {
     if (!['APROBADA', 'RECHAZADA', 'PENDIENTE'].includes(estado)) throw new ErrorDominio('ESTADO_INVALIDO', 'Elige un estado permitido.', 422);
     await this.prisma.$transaction(async (tx) => {
       // La bitácora es inmutable; el bloqueo serializa los cambios del mismo pago simulado.
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${id}))`;
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${id}))::text`;
       const fila = await tx.bitacora.findFirst({ where: { entidad: 'TransaccionSimulada', entidadId: id,
         accion: { in: ['SIMULADOR_CREADO', 'SIMULADOR_ESTADO'] } }, orderBy: { id: 'desc' } });
       if (!fila) throw new ErrorDominio('NO_ENCONTRADO', 'La transacción no existe.', 404);

@@ -75,6 +75,14 @@ const DOMINIO = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)
  * inválidas), textos vacíos, dominios mal formados. Devuelve el mensaje de error o null.
  */
 function valorIrrazonable(clave: string, valor: unknown): string | null {
+  if (clave === 'PORCENTAJE_ANTICIPO') {
+    return typeof valor === 'number' && Number.isFinite(valor) && valor >= 0 && valor <= 100 && /^\d+(?:\.\d{1,2})?$/.test(String(valor))
+      ? null : 'PORCENTAJE_ANTICIPO debe ser un número de 0 a 100 con hasta dos decimales.';
+  }
+  if (clave === 'DIAS_SALDO_ANTES_EVENTO') {
+    return typeof valor === 'number' && Number.isInteger(valor) && valor >= 0 && valor <= 365
+      ? null : 'DIAS_SALDO_ANTES_EVENTO debe ser un entero entre 0 y 365.';
+  }
   if (typeof valor === 'number') {
     const minimo = NUMEROS_QUE_ADMITEN_CERO.has(clave) ? 0 : 1;
     if (!Number.isInteger(valor) || valor < minimo || valor > MAXIMO_NUMERO) {
