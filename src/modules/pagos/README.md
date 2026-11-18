@@ -1,5 +1,31 @@
 # pagos
 
+## Orden de servicio RF-PAG-08 (fase 3)
+
+`POST /api/pagos/ordenes/orden-servicio` requiere Bearer del solicitante dueño, perfil real `ENTIDAD` y solicitud no exenta. Cuerpo multipart: `solicitudId` UUID, `numeroOrdenServicio` texto no vacío de máximo 120 caracteres, `archivo` PDF por contenido de máximo 10 MB. Responde 201 con la misma OrdenPago del POST habitual (`id,referencia,valor,medio,estado,venceEn,tieneSoporte,observacionTesoreria,pagadoEn,cuentaRecaudo`) más `numeroOrdenServicio`; `medio=ORDEN_SERVICIO`, `estado=EN_VERIFICACION`, `tieneSoporte=true`. El número se conserva en la bitácora inmutable vinculada a la orden, sin otra migración. La respuesta hereda cuentaRecaudo del contrato de orden, pero esta modalidad usa su documento diferido.
+
+Tesorería usa exactamente `POST /api/pagos/ordenes/:id/verificacion` JSON `{resultado: APROBADA|RECHAZADA,observacion?:string}`; rechazo exige observación y aprobación confirma solicitud y franjas como consignación. El soporte se descarga por la ruta existente `/api/pagos/ordenes/:id/soporte`. Una orden de pasarela no puede convertirse mediante carga de PDF.
+
+Errores: 400 validación, 401 sin sesión, 403 ORDEN_SERVICIO_NO_PERMITIDA para otros perfiles, 404 solicitud ajena/inexistente, 409 SOLICITUD_EXENTA/ORDEN_NO_PERMITIDA/COTIZACION_VENCIDA, 422 NUMERO_ORDEN_INVALIDO/ARCHIVO_NO_PERMITIDO; 413 sobre 10 MB. Pruebas de ENTIDAD, PDF, exentas y verificación compartida añadidas; ejecución: **no verificado**.
+
+## Conciliación RF-PAG-12 (fase 2)
+
+Acceso exclusivo TESORERIA y ADMINISTRADOR. `GET /api/pagos/conciliacion?fecha=YYYY-MM-DD` devuelve exactamente `{fecha,generadoEn,totales:{aprobadas:{cantidad,valor},rechazadas:{cantidad,valor},pendientes:{cantidad,valor},anuladas:{cantidad,valor}},porProveedor:[{proveedor,aprobadas:{cantidad,valor},rechazadas:{cantidad,valor},pendientes:{cantidad,valor}}],filas:[{ordenId,referencia,proveedor,medio,estado,valor,transaccionExternaId,pagadoEn}],diferencias:[{referencia,tipo,valorSistema,valorExtracto,detalle}]}`. Proveedor, transacción y fecha de pago pueden ser null; en diferencias referencia y ambos valores pueden ser null. `tipo` es VALOR|SIN_ORDEN|SIN_EXTRACTO|ESTADO; medio es PASARELA|CONSIGNACION|ORDEN_SERVICIO; todos los valores son pesos enteros.
+
+El día Bogotá es `[05:00Z,05:00Z del día siguiente)`. Aprobadas se ubican por pagadoEn; las demás por creadaEn; una aprobada sin fecha de pago se muestra por creadaEn para revisión. EN_VERIFICACION suma en pendientes; VENCIDA suma en anuladas; los medios manuales se agrupan por su nombre cuando no tienen proveedor. `POST /api/pagos/conciliacion/extracto?fecha=...` recibe multipart `archivo`, CSV UTF-8 de máximo 2 MB con encabezado `referencia,valor,fecha`, referencias OP únicas, valor entero positivo y fechas del mismo día; responde 200 con el mismo objeto y diferencias. No conserva el archivo: solo fecha, cantidad, SHA256 y resumen de diferencias en bitácora. GET y PDF muestran la última comparación registrada, no infieren SIN_EXTRACTO si nunca hubo carga.
+
+`GET /api/pagos/conciliacion/pdf?fecha=...` descarga application/pdf en tamaño carta. El Cron de las 06:00 America/Bogota genera el PDF del día anterior en almacenamiento, registra el cierre diario y notifica a tesorería si hay pendientes/EN_VERIFICACION de más de 30 minutos o diferencias de la última comparación. El cierre se serializa para evitar avisos duplicados entre instancias. La carga requiere la referencia OP de la orden (no una referencia de intento del proveedor).
+
+Errores: 400 FECHA_INVALIDA, 401 sin sesión, 403 sin rol, 422 CSV_INVALIDO/EXTRACTO_INVALIDO y 413 si excede el tamaño. Pruebas de los cuatro tipos de diferencia, sumas, CSV y límites de día añadidas; ejecución, PDF/renderizado y Cron real: **no verificado** por el constructor.
+
+## Simulador local (fase 1)
+
+Activar `PASARELA_PROVEEDOR=simulador`, secreto propio `SIMULADOR_SECRETO` de al menos 32 caracteres y `SIMULADOR_URL_API=http://127.0.0.1:3001/api` (URL local de este mismo proceso). El arranque rechaza esta selección con `NODE_ENV=production`; también se bloquean los métodos del adaptador en producción aunque no sea el proveedor activo.
+
+`POST /api/pagos/ordenes/:id/pasarela` conserva su contrato y devuelve el enlace a `GET /api/pagos/checkout/simulador?token=...`. Esa página permite Aprobar/Rechazar/Dejar pendiente; `POST` a la misma ruta recibe formulario `{token,estado: APROBADA|RECHAZADA|PENDIENTE}`, guarda el estado del proveedor simulado, emite por HTTP un evento HMAC-SHA256 al webhook real `/api/pagos/webhooks/simulador` y responde 303 al retorno firmado. El estado de la orden solo lo cambia el procesador compartido de webhooks/consulta activa. El simulador mantiene sus operaciones en la bitácora inmutable, con bloqueo por operación, y permite consultas por ID y referencia; un estado final no cambia a otro. Reenviar la misma elección repite la misma identidad de evento para comprobar idempotencia.
+
+La prueba `test/pagos-simulador.e2e-spec.ts` usa la aplicación, base de datos y webhook HTTP reales, con una solicitud inicialmente cotizada; cubre aprobación, rechazo/reintento, duplicados y exentas. Pruebas, build, lint y ejecución e2e: **no verificado**; no fueron ejecutados por el constructor.
+
 órdenes, consignación, puerto de pasarela, webhooks
 
 Estado: consignación y Wompi aprobados por el orquestador; generalización multiproveedor y ePayco pendientes de su revisión y ejecución.

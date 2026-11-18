@@ -21,7 +21,9 @@ export interface Configuracion {
   SMTP_CONTRASENA: string;
   CORREO_REMITENTE: string;
   ALMACENAMIENTO_DIR: string;
-  PASARELA_PROVEEDOR: 'wompi' | 'epayco' | 'bold' | 'ecollect' | 'ninguna';
+  PASARELA_PROVEEDOR: 'wompi' | 'epayco' | 'bold' | 'ecollect' | 'simulador' | 'ninguna';
+  SIMULADOR_SECRETO: string;
+  SIMULADOR_URL_API: string;
   WOMPI_AMBIENTE: 'test' | 'prod';
   WOMPI_URL_API: string;
   WOMPI_LLAVE_PUBLICA: string;
@@ -82,8 +84,8 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
   const texto = (clave: string, defecto = ''): string =>
     entrada[clave] === undefined ? defecto : String(entrada[clave]);
   const proveedor = texto('PASARELA_PROVEEDOR', 'ninguna').trim();
-  if (proveedor !== 'ninguna' && proveedor !== 'wompi' && proveedor !== 'epayco' && proveedor !== 'bold' && proveedor !== 'ecollect') {
-    throw new Error('PASARELA_PROVEEDOR debe ser ninguna, wompi, epayco, bold o ecollect.');
+  if (proveedor !== 'ninguna' && proveedor !== 'wompi' && proveedor !== 'epayco' && proveedor !== 'bold' && proveedor !== 'ecollect' && proveedor !== 'simulador') {
+    throw new Error('PASARELA_PROVEEDOR debe ser ninguna, wompi, epayco, bold, ecollect o simulador.');
   }
   const leerAmbiente = (nombre: string): 'test' | 'prod' => {
     const valor = texto(nombre, 'test').trim();
@@ -118,6 +120,8 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
     CORREO_REMITENTE: texto('CORREO_REMITENTE'),
     ALMACENAMIENTO_DIR: texto('ALMACENAMIENTO_DIR', './almacenamiento'),
     PASARELA_PROVEEDOR: proveedor,
+    SIMULADOR_SECRETO: texto('SIMULADOR_SECRETO'),
+    SIMULADOR_URL_API: texto('SIMULADOR_URL_API', `http://127.0.0.1:${numero(entrada.PORT, 3001, 'PORT')}/api`),
     WOMPI_AMBIENTE: ambiente,
     WOMPI_URL_API: (texto('WOMPI_URL_API').trim() || urlWompi).replace(/\/$/, ''),
     WOMPI_LLAVE_PUBLICA: texto('WOMPI_LLAVE_PUBLICA').trim(),
@@ -158,6 +162,14 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
     if (!configuracion.WOMPI_LLAVE_PUBLICA.startsWith(`pub_${ambiente}_`) ||
         !configuracion.WOMPI_LLAVE_PRIVADA.startsWith(`prv_${ambiente}_`)) {
       throw new Error(`Las llaves Wompi deben corresponder al ambiente ${ambiente} (test=sandbox).`);
+    }
+  }
+  if (proveedor === 'simulador') {
+    if (configuracion.NODE_ENV === 'production') throw new Error('SIMULADOR está prohibido en production.');
+    if (configuracion.SIMULADOR_SECRETO.length < 32) throw new Error('SIMULADOR_SECRETO debe tener al menos 32 caracteres.');
+    const url = new URL(configuracion.SIMULADOR_URL_API);
+    if (!['http:', 'https:'].includes(url.protocol) || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || url.username || url.password) {
+      throw new Error('SIMULADOR_URL_API debe ser una URL local HTTP(S).');
     }
   }
   const obligatoriasProveedor: readonly (keyof Configuracion)[] = proveedor === 'epayco'

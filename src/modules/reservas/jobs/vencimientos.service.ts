@@ -71,7 +71,7 @@ export class VencimientosService {
     }
 
     const { count: ordenes } = await this.prisma.ordenPago.updateMany({
-      where: { estado: EstadoOrdenPago.PENDIENTE, venceEn: { lte: ahora } },
+      where: { estado: EstadoOrdenPago.PENDIENTE, tipo: { not: 'SALDO' }, venceEn: { lte: ahora } },
       data: { estado: EstadoOrdenPago.VENCIDA },
     });
     return { solicitudes, ordenes };

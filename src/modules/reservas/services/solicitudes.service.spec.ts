@@ -70,7 +70,7 @@ function crearEntorno(opciones: { solicitante?: unknown } = {}) {
       count: vi.fn().mockResolvedValue(1),
       update: vi.fn().mockResolvedValue(fila({ objetoEvento: 'Nuevo' })),
     },
-    reembolso: { findFirst: vi.fn().mockResolvedValue(null) },
+    reembolso: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
     bitacora: { findFirst: vi.fn().mockResolvedValue(null) },
     $transaction: vi.fn((fn: (cliente: typeof tx) => Promise<unknown>) => fn(tx)),
   };
@@ -188,6 +188,19 @@ describe('SolicitudesService.obtener', () => {
       ...cambios,
     });
 
+  it('expone tipo de las órdenes y omite la sección de pago en exentas', async () => {
+    const e = crearEntorno();
+    const cotizacion = { consecutivo: 'COT-1', subtotal: 130000, iva: 0, total: 130000, depositoGarantia: 0,
+      valorReferencia: 0, validaHasta: new Date('2026-12-01T12:00:00Z'), ordenesPago: [
+        { id: 'a', referencia: 'OP-1', tipo: 'ANTICIPO', medio: 'CONSIGNACION', estado: 'APROBADA', valor: 39000,
+          venceEn: new Date('2026-12-01T12:00:00Z'), pagadoEn: new Date('2026-11-01T12:00:00Z') },
+      ] };
+    e.prisma.solicitud.findFirst.mockResolvedValue(detalle({ cotizaciones: [cotizacion] }));
+    expect((await e.servicio.obtener(SOLICITUD_ID, usuario())).ordenesPago).toEqual([expect.objectContaining({ tipo: 'ANTICIPO', valor: 39000 })]);
+    e.prisma.solicitud.findFirst.mockResolvedValue(detalle({ cotizaciones: [cotizacion], esExenta: true }));
+    expect(await e.servicio.obtener(SOLICITUD_ID, usuario())).not.toHaveProperty('ordenesPago');
+  });
+
   it('el dueño la ve con reservas, servicios, decisiones y cotización', async () => {
     const e = crearEntorno();
     e.prisma.solicitud.findFirst.mockResolvedValue(detalle());
@@ -293,6 +306,14 @@ describe('SolicitudesService.obtener', () => {
 
     e.prisma.bitacora.findFirst.mockResolvedValue(null);
     expect((await e.servicio.obtener(SOLICITUD_ID, usuario())).reembolso).toMatchObject({ porcentaje: null });
+  });
+
+  it('el detalle suma las partes del mismo reembolso de cancelación', async () => {
+    const e = crearEntorno(); e.prisma.solicitud.findFirst.mockResolvedValue(detalle({ estado: 'CANCELADA' }));
+    e.prisma.reembolso.findFirst.mockResolvedValue({ valor: 1, estado: 'SOLICITADO', motivo: 'Cancelación', creadoEn: new Date('2026-11-05T15:00:00Z') });
+    e.prisma.bitacora.findFirst.mockResolvedValue({ datosDespues: { porcentajeReembolso: 50, reembolsoIds: ['re-s', 're-a'] } });
+    e.prisma.reembolso.findMany.mockResolvedValue([{ valor: 50, estado: 'SOLICITADO' }, { valor: 1, estado: 'SOLICITADO' }]);
+    expect((await e.servicio.obtener(SOLICITUD_ID, usuario())).reembolso).toMatchObject({ valor: 51, porcentaje: 50 });
   });
 
   it('sin cotización devuelve null', async () => {

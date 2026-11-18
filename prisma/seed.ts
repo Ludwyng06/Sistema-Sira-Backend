@@ -24,6 +24,8 @@ async function parametros() {
     ['horas_recordatorio_aprobador', 24, 'Horas para recordar al aprobador.'],
     ['horas_escalamiento_aprobador', 48, 'Horas para escalar la revisión.'],
     ['horas_plazo_pago', 48, 'Plazo de pago desde que queda cotizada (RN-02b).'],
+    ['PORCENTAJE_ANTICIPO', 0, 'Porcentaje inicial de anticipo; 0 desactiva pagos parciales.'],
+    ['DIAS_SALDO_ANTES_EVENTO', 3, 'Días calendario de anticipación del saldo antes del evento.'],
     ['minutos_gracia_pago_pendiente', 120, 'Gracia para pagos con transacción pendiente (RN-02c).'],
     [
       'politica_cancelacion',
@@ -55,6 +57,26 @@ async function parametros() {
         nit: '800.247.940-1',
       },
       'Cuenta donde se consignan los pagos.',
+    ],
+    [
+      'PAGO_ENLACE_URL',
+      '',
+      'URL https del portal institucional de recaudo o PSE para pagar las órdenes (vacío si no está configurado).',
+    ],
+    [
+      'PAGO_INSTRUCCIONES',
+      'Realiza el pago por el valor exacto indicando la referencia de la orden, descarga o toma captura del comprobante (PDF, PNG o JPG) y cárgalo en SIRA para su verificación por Tesorería.',
+      'Instrucciones que ve el solicitante para realizar el pago y cargar el comprobante.',
+    ],
+    [
+      'PAGO_WHATSAPP_AREA',
+      '',
+      'Número de WhatsApp del área de Tesorería con indicativo de país y solo dígitos (10 a 15, ej. 573001234567) o vacío.',
+    ],
+    [
+      'PAGO_CORREO_AREA',
+      '',
+      'Correo electrónico adicional del área de Tesorería o recaudo para recibir avisos al cargar un soporte de pago (o vacío).',
     ],
   ];
   for (const [clave, valor, descripcion] of datos) {

@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
-import { EstadoOrdenPago, EstadoReembolso, MedioPago } from '../../../generated/prisma/enums.js';
+import { IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
+import { EstadoOrdenPago, EstadoReembolso, MedioPago, TipoOrdenPago } from '../../../generated/prisma/enums.js';
 
 export class CrearOrdenPagoDto {
   @ApiProperty({ format: 'uuid', example: '6e1d8c1e-6a4d-4e0b-9a57-1c2d3e4f5a6b', description: 'Solicitud cotizada.' })
@@ -16,6 +16,12 @@ export class SubirSoporteDto {
     description: 'Comprobante de consignación en PDF, PNG o JPG de máximo 10 MB (campo multipart «archivo»).',
   })
   archivo!: unknown;
+}
+
+export class CrearOrdenServicioDto extends CrearOrdenPagoDto {
+  @ApiProperty({ maxLength: 120, example: 'OS-2026-00123' })
+  @IsString() @IsNotEmpty() @MaxLength(120) numeroOrdenServicio!: string;
+  @ApiProperty({ type: 'string', format: 'binary', description: 'Orden de servicio en PDF de máximo 10 MB.' }) archivo!: unknown;
 }
 
 export const RESULTADOS_VERIFICACION = ['APROBADA', 'RECHAZADA'] as const;
@@ -77,6 +83,8 @@ export class CuentaRecaudoDto {
 }
 
 export class OrdenPagoDto {
+  @ApiProperty({ enum: TipoOrdenPago, description: 'TOTAL conserva el flujo habitual; ANTICIPO asegura la reserva y SALDO completa el pago.' })
+  tipo!: TipoOrdenPago;
   @ApiProperty({ format: 'uuid' })
   id!: string;
 
@@ -108,7 +116,61 @@ export class OrdenPagoDto {
   cuentaRecaudo!: CuentaRecaudoDto;
 }
 
+export class OrdenServicioRespuestaDto extends OrdenPagoDto {
+  @ApiProperty({ example: 'OS-2026-00123', description: 'Número preservado en la bitácora de carga de la orden de servicio.' })
+  numeroOrdenServicio!: string;
+}
+
+export class WhatsappInstruccionesPagoDto {
+  @ApiProperty({ example: '573001234567', description: 'Número de WhatsApp del área con indicativo.' })
+  numero!: string;
+
+  @ApiProperty({
+    example: 'https://wa.me/573001234567?text=Hola...',
+    description: 'Enlace wa.me con el mensaje de aviso prellenado y codificado.',
+  })
+  url!: string;
+}
+
+export class InstruccionesPagoDto {
+  @ApiProperty({ format: 'uuid' })
+  ordenPagoId!: string;
+
+  @ApiProperty({ example: 'OP-2026-000001' })
+  referencia!: string;
+
+  @ApiProperty({ example: 350000, description: 'Valor a pagar en pesos enteros.' })
+  valor!: number;
+
+  @ApiProperty({ enum: TipoOrdenPago, example: TipoOrdenPago.TOTAL })
+  tipo!: TipoOrdenPago;
+
+  @ApiProperty({ enum: EstadoOrdenPago, example: EstadoOrdenPago.PENDIENTE })
+  estado!: EstadoOrdenPago;
+
+  @ApiProperty({ example: '2026-10-24T15:00:00.000Z' })
+  venceEn!: string;
+
+  @ApiProperty({ type: String, nullable: true, example: 'https://recaudo.uniputumayo.edu.co/pagos' })
+  enlacePago!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: 'Realiza el pago por el valor exacto indicando la referencia de la orden y sube el comprobante en SIRA.',
+  })
+  instrucciones!: string | null;
+
+  @ApiProperty({ example: false, description: 'True solo si PASARELA_PROVEEDOR es distinto de ninguna.' })
+  pasarelaEnLinea!: boolean;
+
+  @ApiProperty({ type: WhatsappInstruccionesPagoDto, nullable: true })
+  whatsapp!: WhatsappInstruccionesPagoDto | null;
+}
+
 export class OrdenPagoResumenDto {
+  @ApiProperty({ enum: TipoOrdenPago }) tipo!: TipoOrdenPago;
+  @ApiProperty({ enum: MedioPago }) medio!: MedioPago;
   @ApiProperty({ format: 'uuid' })
   id!: string;
 

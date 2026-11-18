@@ -5,16 +5,16 @@ import { PrismaService } from '../prisma/prisma.service.js';
 export class ParametroService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async obtenerNumero(clave: string): Promise<number> {
-    const valor = await this.obtenerValor(clave);
+  async obtenerNumero(clave: string, defecto?: number): Promise<number> {
+    const valor = await this.obtenerValor(clave, defecto);
     if (typeof valor !== 'number' || !Number.isFinite(valor)) {
       throw new Error(`El parámetro "${clave}" debe ser un número finito.`);
     }
     return valor;
   }
 
-  async obtenerTexto(clave: string): Promise<string> {
-    const valor = await this.obtenerValor(clave);
+  async obtenerTexto(clave: string, defecto?: string): Promise<string> {
+    const valor = await this.obtenerValor(clave, defecto);
     if (typeof valor !== 'string') {
       throw new Error(`El parámetro "${clave}" debe ser texto.`);
     }
@@ -34,12 +34,15 @@ export class ParametroService {
     return this.obtenerValor(clave);
   }
 
-  private async obtenerValor(clave: string): Promise<unknown> {
+  private async obtenerValor(clave: string, defecto?: unknown): Promise<unknown> {
     const parametro = await this.prisma.parametro.findUnique({
       where: { clave },
       select: { valor: true },
     });
-    if (!parametro) throw new Error(`El parámetro "${clave}" no existe.`);
+    if (!parametro) {
+      if (defecto !== undefined) return defecto;
+      throw new Error(`El parámetro "${clave}" no existe.`);
+    }
     return parametro.valor;
   }
 }

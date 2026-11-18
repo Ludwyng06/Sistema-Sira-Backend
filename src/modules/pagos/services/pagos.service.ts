@@ -1,5 +1,6 @@
 import { formatearPesos } from '../../../shared/formato/pesos.js';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import type { Prisma } from '../../../generated/prisma/client.js';
 import {
@@ -17,10 +18,12 @@ import { PrismaService } from '../../../shared/prisma/prisma.service.js';
 import { NotificacionesService } from '../../notificaciones/services/notificaciones.service.js';
 import { detectarTipoMime, EXTENSION_POR_TIPO } from '../../reservas/dominio/contenido-archivo.js';
 import { transicionOConflicto } from '../../reservas/dominio/maquina-estados.js';
+import { PagosParcialesService } from './pagos-parciales.service.js';
 import type {
   CuentaRecaudoDto,
   FiltrosOrdenesDto,
   FiltrosReembolsosDto,
+  InstruccionesPagoDto,
   OrdenPagoDto,
   OrdenPagoResumenDto,
   PagoTardioDto,
@@ -59,6 +62,29 @@ const ESTADOS_ACTIVOS: EstadoOrdenPago[] = [
   EstadoOrdenPago.APROBADA,
 ];
 
+const ESTADOS_CON_INSTRUCCIONES: EstadoOrdenPago[] = [
+  EstadoOrdenPago.PENDIENTE,
+  EstadoOrdenPago.RECHAZADA,
+  EstadoOrdenPago.EN_VERIFICACION,
+];
+
+/** El contrato del mensaje de WhatsApp exige espacio tras el signo («$ 1.234.567»), a diferencia de `formatearPesos` («$1.234.567»). */
+function formatearPesosConEspacio(valor: number): string {
+  return formatearPesos(Math.trunc(valor)).replace('$', '$ ');
+}
+
+function nombreSolicitante(
+  solicitante: { nombres?: string | null; apellidos?: string | null; razonSocial?: string | null } | null | undefined,
+  alternativa = 'Solicitante',
+): string {
+  if (!solicitante) return alternativa;
+  const nombreCompleto = [solicitante.nombres, solicitante.apellidos]
+    .map((p) => p?.trim())
+    .filter((p): p is string => Boolean(p))
+    .join(' ');
+  return nombreCompleto || solicitante.razonSocial?.trim() || alternativa;
+}
+
 function leerCuenta(valor: unknown): CuentaRecaudoDto {
   const c = valor as Record<string, unknown> | null;
   const campos = ['banco', 'tipo', 'numero', 'titular', 'nit'] as const;
@@ -76,14 +102,34 @@ function leerCuenta(valor: unknown): CuentaRecaudoDto {
 
 type FilaOrden = Prisma.OrdenPagoGetPayload<Record<string, never>>;
 
+interface DatosSolicitudOrden {
+  esExenta?: boolean;
+  solicitud?: {
+    consecutivo?: string | null;
+    esExenta?: boolean;
+    solicitante?: {
+      usuarioId?: string;
+      nombres?: string | null;
+      apellidos?: string | null;
+      razonSocial?: string | null;
+    } | null;
+  } | null;
+}
+
+type FilaOrdenConContexto = FilaOrden & { cotizacion?: DatosSolicitudOrden | null };
+
 @Injectable()
 export class PagosService {
+  private readonly logger = new Logger(PagosService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly consecutivos: ConsecutivoService,
     private readonly parametros: ParametroService,
     @Inject(ALMACENAMIENTO) private readonly almacenamiento: AlmacenamientoPort,
     private readonly notificaciones: NotificacionesService,
+    private readonly parciales: PagosParcialesService,
+    private readonly config: ConfigService,
   ) {}
 
   /** UC-03 paso 1. RN-08: una solicitud exenta no tiene pago. */
@@ -105,7 +151,8 @@ export class PagosService {
     }
     if (
       solicitud.estado !== EstadoSolicitud.COTIZADA &&
-      solicitud.estado !== EstadoSolicitud.PAGO_PENDIENTE
+      solicitud.estado !== EstadoSolicitud.PAGO_PENDIENTE &&
+      solicitud.estado !== EstadoSolicitud.CONFIRMADA
     ) {
       throw new ErrorDominio(
         'ORDEN_NO_PERMITIDA',
@@ -115,11 +162,23 @@ export class PagosService {
     }
     const cotizacion = solicitud.cotizaciones[0];
     const ahora = new Date();
-    if (!cotizacion || cotizacion.validaHasta <= ahora) {
+    if (!cotizacion || (solicitud.estado !== EstadoSolicitud.CONFIRMADA && cotizacion.validaHasta <= ahora)) {
       throw new ErrorDominio('COTIZACION_VENCIDA', 'La cotización venció. Solicita una nueva.', 409);
     }
 
     const cuenta = leerCuenta(await this.parametros.obtenerJson('cuenta_recaudo'));
+    if (solicitud.estado === EstadoSolicitud.CONFIRMADA) {
+      const anticipo = await this.prisma.ordenPago.findFirst({ where: { cotizacionId: cotizacion.id, tipo: 'ANTICIPO', estado: 'APROBADA' }, orderBy: { pagadoEn: 'asc' } });
+      if (!anticipo) throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'La solicitud ya está pagada o no tiene anticipo aprobado.', 409);
+      const saldo = await this.prisma.$transaction(async (tx) => {
+        const bloqueo = await tx.solicitud.updateMany({ where: { id: solicitudId, estado: 'CONFIRMADA' }, data: { actualizadoEn: new Date() } });
+        if (!bloqueo.count) throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'La solicitud cambió de estado.', 409);
+        return this.parciales.asegurarSaldo(tx, anticipo);
+      });
+      if (!saldo || saldo.estado !== 'PENDIENTE') throw new ErrorDominio('ORDEN_NO_PERMITIDA', 'No hay un saldo pendiente de pago.', 409);
+      if (saldo.venceEn <= ahora) throw new ErrorDominio('SALDO_VENCIDO', 'El plazo para pagar el saldo terminó.', 409);
+      return this.aDto(saldo, cuenta);
+    }
     const activa = await this.prisma.ordenPago.findFirst({
       where: { cotizacionId: cotizacion.id, estado: { in: ESTADOS_ACTIVOS } },
       orderBy: { creadaEn: 'desc' },
@@ -133,14 +192,17 @@ export class PagosService {
       );
     }
 
-    const valor = cotizacion.total + cotizacion.depositoGarantia;
-    if (valor <= 0) {
+    const total = cotizacion.total + cotizacion.depositoGarantia;
+    if (total <= 0) {
       throw new ErrorDominio(
         'ORDEN_SIN_VALOR',
         'Esta solicitud no tiene un valor a pagar. Comunícate con la administración.',
         422,
       );
     }
+    const plan = await this.parciales.planInicial(total, solicitudId);
+    const valor = plan.anticipo;
+    if (valor > 2147483647 || plan.saldo > 2147483647) throw new ErrorDominio('VALOR_INVALIDO', 'El pago excede el rango permitido de pesos enteros.', 422);
     const orden = await this.prisma.$transaction(async (tx) => {
       // Guarda de concurrencia: la fila de la solicitud se bloquea hasta el commit, así que dos
       // peticiones simultáneas no pueden crear dos órdenes de la misma cotización.
@@ -171,6 +233,7 @@ export class PagosService {
           cotizacionId: cotizacion.id,
           valor,
           medio: MedioPago.CONSIGNACION,
+          tipo: plan.tipo,
           venceEn: cotizacion.validaHasta,
         },
       });
@@ -194,12 +257,19 @@ export class PagosService {
           ip: contexto.ip,
           userAgent: contexto.userAgent,
           correlacionId: contexto.correlacionId,
-          datosDespues: { referencia, valor, solicitudId },
+          datosDespues: { referencia, valor, solicitudId, tipo: plan.tipo, saldoVenceEn: plan.saldoVenceEn?.toISOString() ?? null },
         },
       });
       return creada;
     });
     return this.aDto(orden, cuenta);
+  }
+
+  async crearSaldo(anticipoId: string, usuario: UsuarioAutenticado, contexto: ContextoPago): Promise<OrdenPagoDto> {
+    const anticipo = await this.prisma.ordenPago.findFirst({ where: { id: anticipoId, cotizacion: { solicitud: { solicitante: { usuarioId: usuario.id } } } }, include: { cotizacion: true } });
+    if (!anticipo) throw noEncontrado('La orden de pago');
+    if (anticipo.tipo !== 'ANTICIPO' || anticipo.estado !== 'APROBADA') throw new ErrorDominio('ANTICIPO_NO_APROBADO', 'Solo un anticipo aprobado permite generar saldo.', 409);
+    return this.crearOrden(anticipo.cotizacion.solicitudId, usuario, contexto);
   }
 
   /** UC-03 paso 2: el solicitante carga el comprobante y la orden pasa a verificación. */
@@ -208,6 +278,7 @@ export class PagosService {
     archivo: SoporteSubido | undefined,
     usuario: UsuarioAutenticado,
     contexto: ContextoPago,
+    numeroOrdenServicio?: string,
   ): Promise<OrdenPagoDto> {
     const orden = await this.ordenPropia(ordenId, usuario);
     if (orden.medio === MedioPago.PASARELA) {
@@ -233,15 +304,20 @@ export class PagosService {
     if (!tipoMime) {
       throw new ErrorDominio('ARCHIVO_NO_PERMITIDO', 'Solo se aceptan archivos PDF, PNG o JPG.', 422);
     }
+    if ((numeroOrdenServicio || orden.medio === MedioPago.ORDEN_SERVICIO) && tipoMime !== 'application/pdf') {
+      throw new ErrorDominio('ARCHIVO_NO_PERMITIDO', 'La orden de servicio debe ser un archivo PDF.', 422);
+    }
 
     const clave = `pagos/${orden.id}/${randomUUID()}.${EXTENSION_POR_TIPO[tipoMime]}`;
     await this.almacenamiento.guardar(clave, archivo.buffer, tipoMime);
+    let actualizada: FilaOrden;
     try {
-      const actualizada = await this.prisma.$transaction(async (tx) => {
+      actualizada = await this.prisma.$transaction(async (tx) => {
         // Guarda: si tesorería o el vencimiento ya resolvieron la orden, el soporte no la revierte.
         const { count } = await tx.ordenPago.updateMany({
           where: { id: orden.id, estado: EstadoOrdenPago.PENDIENTE, medio: { not: MedioPago.PASARELA } },
-          data: { soporteUrl: clave, estado: EstadoOrdenPago.EN_VERIFICACION },
+          data: { soporteUrl: clave, estado: EstadoOrdenPago.EN_VERIFICACION,
+            ...(numeroOrdenServicio ? { medio: MedioPago.ORDEN_SERVICIO } : {}) },
         });
         if (count === 0) {
           throw new ErrorDominio(
@@ -254,22 +330,124 @@ export class PagosService {
         await tx.bitacora.create({
           data: {
             usuarioId: usuario.id,
-            accion: 'SOPORTE_PAGO_CARGADO',
+            accion: numeroOrdenServicio ? 'ORDEN_SERVICIO_CARGADA' : 'SOPORTE_PAGO_CARGADO',
             entidad: 'OrdenPago',
             entidadId: orden.id,
             ip: contexto.ip,
             userAgent: contexto.userAgent,
             correlacionId: contexto.correlacionId,
-            datosDespues: { referencia: orden.referencia },
+            datosDespues: { referencia: orden.referencia, ...(numeroOrdenServicio ? { numeroOrdenServicio } : {}) },
           },
         });
         return fila;
       });
-      return this.aDto(actualizada, leerCuenta(await this.parametros.obtenerJson('cuenta_recaudo')));
     } catch (error) {
       await this.almacenamiento.eliminar(clave);
       throw error;
     }
+    const dto = this.aDto(actualizada, leerCuenta(await this.parametros.obtenerJson('cuenta_recaudo')));
+    await this.notificarSoporteCargado(orden, actualizada, usuario);
+    return dto;
+  }
+
+  /** Consulta las instrucciones de pago por enlace y el enlace de aviso por WhatsApp de una orden. */
+  async instrucciones(ordenId: string, usuario: UsuarioAutenticado): Promise<InstruccionesPagoDto> {
+    const esTesoreriaOAdmin =
+      usuario.roles.includes('TESORERIA') ||
+      usuario.roles.includes('ADMINISTRADOR');
+    const orden = (await this.prisma.ordenPago.findFirst({
+      where: {
+        id: ordenId,
+        ...(esTesoreriaOAdmin
+          ? {}
+          : { cotizacion: { solicitud: { solicitante: { usuarioId: usuario.id } } } }),
+      },
+      include: {
+        cotizacion: {
+          include: {
+            solicitud: {
+              include: {
+                solicitante: {
+                  select: { usuarioId: true, nombres: true, apellidos: true, razonSocial: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    })) as FilaOrdenConContexto | null;
+    if (!orden) throw noEncontrado('La orden de pago');
+    if (
+      !esTesoreriaOAdmin &&
+      orden.cotizacion?.solicitud?.solicitante?.usuarioId &&
+      orden.cotizacion.solicitud.solicitante.usuarioId !== usuario.id
+    ) {
+      throw noEncontrado('La orden de pago');
+    }
+    if (orden.cotizacion?.esExenta || orden.cotizacion?.solicitud?.esExenta) {
+      throw new ErrorDominio('SOLICITUD_EXENTA', 'Esta solicitud es exenta: no requiere pago.', 409);
+    }
+    if (!ESTADOS_CON_INSTRUCCIONES.includes(orden.estado)) {
+      throw new ErrorDominio(
+        'ORDEN_NO_PERMITIDA',
+        'Solo se pueden consultar instrucciones de una orden pendiente, rechazada o en verificación.',
+        409,
+      );
+    }
+
+    const [enlaceCrudo, instruccionesCrudas, whatsappCrudo] = await Promise.all([
+      this.parametros.obtenerTexto('PAGO_ENLACE_URL', ''),
+      this.parametros.obtenerTexto('PAGO_INSTRUCCIONES', ''),
+      this.parametros.obtenerTexto('PAGO_WHATSAPP_AREA', ''),
+    ]);
+    const enlacePago = enlaceCrudo.trim() || null;
+    const instrucciones = instruccionesCrudas.trim() || null;
+    const numeroWhatsapp = whatsappCrudo.trim();
+    const solicitud = orden.cotizacion?.solicitud;
+    const nombre = nombreSolicitante(solicitud?.solicitante);
+    const consecutivo = solicitud?.consecutivo ?? orden.referencia;
+    const mensaje =
+      `Hola, soy ${nombre}. Realicé el pago de la orden ${orden.referencia} ` +
+      `por ${formatearPesosConEspacio(orden.valor)} de la solicitud ${consecutivo}. ` +
+      'Ya cargué el comprobante en SIRA.';
+
+    return {
+      ordenPagoId: orden.id,
+      referencia: orden.referencia,
+      valor: orden.valor,
+      tipo: orden.tipo,
+      estado: orden.estado,
+      venceEn: orden.venceEn.toISOString(),
+      enlacePago,
+      instrucciones,
+      pasarelaEnLinea: this.esPasarelaEnLinea(),
+      whatsapp: numeroWhatsapp
+        ? {
+            numero: numeroWhatsapp,
+            url: `https://wa.me/${numeroWhatsapp}?text=${encodeURIComponent(mensaje)}`,
+          }
+        : null,
+    };
+  }
+
+  /** RF-PAG-08: el medio diferido conserva el mismo proceso de verificación de soportes. */
+  async crearOrdenServicio(solicitudId: string, numero: string, archivo: SoporteSubido | undefined,
+    usuario: UsuarioAutenticado, contexto: ContextoPago): Promise<OrdenPagoDto & { numeroOrdenServicio: string }> {
+    const perfil = await this.prisma.solicitante.findUnique({ where: { usuarioId: usuario.id }, select: { id: true, tipo: true } });
+    const solicitud = perfil ? await this.prisma.solicitud.findFirst({ where: { id: solicitudId, solicitanteId: perfil.id }, select: { esExenta: true } }) : null;
+    if (!solicitud) throw noEncontrado('La solicitud');
+    if (solicitud.esExenta) throw new ErrorDominio('SOLICITUD_EXENTA', 'Una solicitud exenta no admite orden de servicio.', 409);
+    if (perfil?.tipo !== 'ENTIDAD') throw new ErrorDominio('ORDEN_SERVICIO_NO_PERMITIDA', 'Solo una entidad pública puede pagar contra orden de servicio.', 403);
+    const numeroOrdenServicio = typeof numero === 'string' ? numero.trim() : '';
+    if (!numeroOrdenServicio || numeroOrdenServicio.length > 120 || [...numeroOrdenServicio].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)) {
+      throw new ErrorDominio('NUMERO_ORDEN_INVALIDO', 'Indica un número de orden de servicio válido de hasta 120 caracteres.', 422);
+    }
+    if (!archivo || !archivo.buffer.length || archivo.buffer.length > TAMANO_MAXIMO_SOPORTE || detectarTipoMime(archivo.buffer) !== 'application/pdf') {
+      throw new ErrorDominio('ARCHIVO_NO_PERMITIDO', 'Adjunta una orden de servicio PDF de máximo 10 MB.', 422);
+    }
+    const orden = await this.crearOrden(solicitudId, usuario, contexto);
+    const resultado = await this.cargarSoporte(orden.id, archivo, usuario, contexto, numeroOrdenServicio);
+    return { ...resultado, numeroOrdenServicio };
   }
 
   /** UC-03 paso 3: tesorería aprueba o rechaza. Aprobar confirma la solicitud y sus franjas (RN-11). */
@@ -303,6 +481,9 @@ export class PagosService {
     const solicitud = orden.cotizacion.solicitud;
     const ahora = new Date();
     const resultado = await this.prisma.$transaction(async (tx) => {
+      // Mismo orden de bloqueo que pasarelas y Cron de saldo: solicitud, luego orden.
+      const bloqueo = await tx.solicitud.updateMany({ where: { id: solicitud.id, estado: solicitud.estado }, data: { actualizadoEn: ahora } });
+      if (!bloqueo.count) throw new ErrorDominio('TRANSICION_INVALIDA', 'La solicitud cambió de estado.', 409);
       // Guarda de concurrencia: solo una verificación puede resolver la orden.
       const { count } = await tx.ordenPago.updateMany({
         where: { id: ordenId, estado: EstadoOrdenPago.EN_VERIFICACION },
@@ -317,8 +498,10 @@ export class PagosService {
       }
       let estadoSolicitud: EstadoSolicitud = solicitud.estado;
       if (datos.resultado === 'APROBADA') {
-        const destino = transicionOConflicto(solicitud.estado, 'CONFIRMAR_PAGO');
-        const confirmada = await tx.solicitud.updateMany({
+        const esSaldo = orden.tipo === 'SALDO';
+        if (esSaldo && solicitud.estado !== 'CONFIRMADA') throw new ErrorDominio('TRANSICION_INVALIDA', 'El saldo requiere una reserva confirmada por anticipo.', 409);
+        const destino = esSaldo ? solicitud.estado : transicionOConflicto(solicitud.estado, 'CONFIRMAR_PAGO');
+        const confirmada = esSaldo ? { count: 1 } : await tx.solicitud.updateMany({
           where: { id: solicitud.id, estado: solicitud.estado },
           data: { estado: destino, venceEn: null },
         });
@@ -338,11 +521,11 @@ export class PagosService {
             observacionTesoreria: observacion || null,
           },
         });
-        await tx.franjaOcupada.updateMany({
+        if (!esSaldo) await tx.franjaOcupada.updateMany({
           where: { reservaItemId: { in: solicitud.reservas.map((r) => r.id) }, estado: 'RETENIDA' },
           data: { estado: 'CONFIRMADA', retenidaHasta: null },
         });
-        await tx.historialEstadoSolicitud.create({
+        if (!esSaldo) await tx.historialEstadoSolicitud.create({
           data: {
             solicitudId: solicitud.id,
             estadoAnterior: solicitud.estado,
@@ -351,6 +534,7 @@ export class PagosService {
             observacion: orden.referencia,
           },
         });
+        if (orden.tipo === 'ANTICIPO') await this.parciales.asegurarSaldo(tx, orden);
         estadoSolicitud = destino;
       } else {
         await tx.ordenPago.update({
@@ -386,7 +570,7 @@ export class PagosService {
         ? `Pago confirmado de la solicitud ${etiqueta}`
         : `Pago rechazado de la solicitud ${etiqueta}`,
       cuerpo: aprobada
-        ? `Verificamos la consignación de la orden ${orden.referencia}. Tu horario quedó confirmado.`
+        ? `Verificamos el documento de pago de la orden ${orden.referencia}. Tu horario quedó confirmado.`
         : `No pudimos verificar la orden ${orden.referencia}. Motivo: ${observacion}. Genera una nueva orden.`,
     });
     return resultado;
@@ -444,6 +628,8 @@ export class PagosService {
     const observacion = datos.observacion?.trim() || null;
     const ahora = new Date();
     const resultado = await this.prisma.$transaction(async (tx): Promise<PagoTardioDto> => {
+      const bloqueo = await tx.solicitud.updateMany({ where: { id: solicitud.id, estado: 'VENCIDA' }, data: { actualizadoEn: ahora } });
+      if (!bloqueo.count) throw new ErrorDominio('PAGO_TARDIO_NO_APLICA', 'La solicitud cambió de estado.', 409);
       const { count } = await tx.ordenPago.updateMany({
         where: { id: ordenId, estado: EstadoOrdenPago.VENCIDA },
         data: {
@@ -495,6 +681,7 @@ export class PagosService {
             datosDespues: { referencia: orden.referencia, valor: orden.valor, solicitudId: solicitud.id },
           },
         });
+        if (orden.tipo === 'ANTICIPO') await this.parciales.asegurarSaldo(tx, orden);
         return { resultado: 'CONFIRMADA', estadoSolicitud: destino, valorReembolso: null };
       }
 
@@ -563,6 +750,8 @@ export class PagosService {
       solicitudId: f.cotizacion.solicitudId,
       consecutivoSolicitud: f.cotizacion.solicitud.consecutivo,
       valor: f.valor,
+      tipo: f.tipo,
+      medio: f.medio,
       estado: f.estado,
       tieneSoporte: f.soporteUrl !== null,
       venceEn: f.venceEn.toISOString(),
@@ -794,12 +983,78 @@ export class PagosService {
     };
   }
 
-  private async ordenPropia(ordenId: string, usuario: UsuarioAutenticado): Promise<FilaOrden> {
-    const orden = await this.prisma.ordenPago.findFirst({
+  private async ordenPropia(ordenId: string, usuario: UsuarioAutenticado): Promise<FilaOrdenConContexto> {
+    const orden = (await this.prisma.ordenPago.findFirst({
       where: { id: ordenId, cotizacion: { solicitud: { solicitante: { usuarioId: usuario.id } } } },
-    });
+      include: {
+        cotizacion: {
+          include: {
+            solicitud: {
+              include: {
+                solicitante: {
+                  select: { usuarioId: true, nombres: true, apellidos: true, razonSocial: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    })) as FilaOrdenConContexto | null;
     if (!orden) throw noEncontrado('La orden de pago');
     return orden;
+  }
+
+  private esPasarelaEnLinea(): boolean {
+    const proveedor = (this.config.get<string>('PASARELA_PROVEEDOR') || 'ninguna').trim().toLowerCase();
+    return proveedor !== 'ninguna';
+  }
+
+  private async notificarSoporteCargado(
+    orden: FilaOrdenConContexto,
+    actualizada: FilaOrden,
+    usuario: UsuarioAutenticado,
+  ): Promise<void> {
+    try {
+      const solicitud = orden.cotizacion?.solicitud;
+      const consecutivo = solicitud?.consecutivo ?? actualizada.referencia;
+      const solicitante = nombreSolicitante(solicitud?.solicitante, usuario.correo);
+      const valorTexto = formatearPesosConEspacio(actualizada.valor);
+      const titulo = `Soporte de pago cargado: orden ${actualizada.referencia}`;
+      const cuerpo =
+        `El solicitante ${solicitante} cargó el soporte de pago de la orden ${actualizada.referencia} ` +
+        `por ${valorTexto} correspondiente a la solicitud ${consecutivo}.`;
+
+      const [tesoreria, correoAreaCrudo] = await Promise.all([
+        this.prisma.usuarioRol.findMany({
+          where: { rol: 'TESORERIA', usuario: { activo: true } },
+          select: { usuarioId: true },
+        }),
+        this.parametros.obtenerTexto('PAGO_CORREO_AREA', ''),
+      ]);
+
+      const idsTesoreria = [...new Set(tesoreria.map((t) => t.usuarioId))];
+      const correoArea = correoAreaCrudo.trim();
+      const resultados = await Promise.allSettled([
+        ...idsTesoreria.map((id) =>
+          this.notificaciones.notificarUsuario(id, {
+            titulo,
+            cuerpo,
+            enlace: '/pagos/conciliacion',
+          }),
+        ),
+        ...(correoArea ? [this.notificaciones.enviarCorreo(correoArea, { titulo, cuerpo })] : []),
+      ]);
+      const fallos = resultados.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (fallos.length > 0) {
+        throw fallos[0]!.reason;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo enviar la notificación de soporte de la orden ${actualizada.referencia}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   private aDto(orden: FilaOrden, cuenta: CuentaRecaudoDto): OrdenPagoDto {
@@ -807,6 +1062,7 @@ export class PagosService {
       id: orden.id,
       referencia: orden.referencia,
       valor: orden.valor,
+      tipo: orden.tipo,
       medio: orden.medio,
       estado: orden.estado,
       venceEn: orden.venceEn.toISOString(),

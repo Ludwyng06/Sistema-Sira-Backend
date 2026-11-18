@@ -20,6 +20,7 @@ export type EventoSolicitud =
   | 'CONFIRMAR_PAGO'
   | 'CONFIRMAR_PAGO_TARDIO'
   | 'VENCER'
+  | 'VENCER_SALDO'
   | 'ENTREGAR'
   | 'DEVOLVER_ESPACIO'
   | 'CERRAR'
@@ -44,7 +45,8 @@ const TRANSICIONES: Record<EstadoSolicitud, Partial<Record<EventoSolicitud, Esta
   PAGO_PENDIENTE: { CONFIRMAR_PAGO: 'CONFIRMADA', VENCER: 'VENCIDA' },
   // RN-02d: pago tardío con la franja todavía libre.
   VENCIDA: { CONFIRMAR_PAGO_TARDIO: 'CONFIRMADA' },
-  CONFIRMADA: { ENTREGAR: 'EN_USO', CANCELAR: 'CANCELADA' },
+  // Solo el Cron de saldos puede emitir VENCER_SALDO tras verificar deuda y soportes.
+  CONFIRMADA: { ENTREGAR: 'EN_USO', CANCELAR: 'CANCELADA', VENCER_SALDO: 'VENCIDA' },
   EN_USO: { DEVOLVER_ESPACIO: 'FINALIZADA' },
   FINALIZADA: { CERRAR: 'CERRADA' },
   CANCELADA: { REEMBOLSAR: 'REEMBOLSADA' },

@@ -9,6 +9,7 @@ import { fechaLocal } from '../../../shared/tiempo/zona-horaria.js';
 import { NotificacionesService } from '../../notificaciones/services/notificaciones.service.js';
 import { motivoReembolso } from '../dominio/reembolso.js';
 import { TransicionInvalida, validarTransicion } from '../dominio/maquina-estados.js';
+import { repartirReembolso } from '../../pagos/dominio/reparto-reembolso.js';
 import type {
   CancelarSolicitudDto,
   CancelacionDto,
@@ -85,8 +86,7 @@ export class CancelacionService {
         reservas: { select: { id: true, inicio: true }, orderBy: { inicio: 'asc' } },
         cotizaciones: {
           orderBy: { creadaEn: 'desc' },
-          take: 1,
-          include: { ordenesPago: { where: { estado: 'APROBADA' }, select: { id: true }, take: 1 } },
+          include: { ordenesPago: { where: { estado: 'APROBADA' }, select: { id: true, valor: true, tipo: true } } },
         },
       },
     });
@@ -114,7 +114,6 @@ export class CancelacionService {
     const cotizacion = solicitud.cotizaciones[0];
     const cobrada = cotizacion !== undefined && !cotizacion.esExenta && cotizacion.total > 0;
     const porcentaje = !cobrada ? 0 : institucional ? 100 : porcentajeReembolso(politica, diasDeAntelacion);
-    const valorReembolso = cobrada ? Math.round((cotizacion.total * porcentaje) / 100) : 0;
     const motivo = datos.motivo.trim();
 
     const cancelada = await this.prisma.$transaction(async (tx) => {
@@ -124,6 +123,9 @@ export class CancelacionService {
         data: { actualizadoEn: new Date() },
       });
       if (count === 0) throw noCancelable('La solicitud cambió de estado mientras se cancelaba.');
+      // Tras bloquear la solicitud, vuelve a leer lo cobrado para incluir un saldo concurrente.
+      const pagadas = await tx.ordenPago.findMany({ where: { estado: 'APROBADA', cotizacion: { solicitudId: id } }, select: { id: true, valor: true, tipo: true } });
+      const { valorReembolso, reparto } = repartirReembolso(pagadas, porcentaje);
       await tx.solicitud.update({
         where: { id },
         data: {
@@ -137,16 +139,17 @@ export class CancelacionService {
         where: { reservaItemId: { in: solicitud.reservas.map((r) => r.id) }, estado: { not: 'LIBERADA' } },
         data: { estado: 'LIBERADA', retenidaHasta: null },
       });
-      const ordenPagada = cotizacion?.ordenesPago[0];
-      if (ordenPagada && valorReembolso > 0) {
-        await tx.reembolso.create({
+      const reembolsoIds: string[] = [];
+      for (const parte of reparto) {
+        const creado = await tx.reembolso.create({
           data: {
-            ordenPagoId: ordenPagada.id,
-            valor: valorReembolso,
+            ordenPagoId: parte.ordenPagoId,
+            valor: parte.valor,
             motivo: motivoReembolso(institucional, porcentaje, diasDeAntelacion),
             estado: 'SOLICITADO',
           },
         });
+        reembolsoIds.push(creado.id);
       }
       await tx.historialEstadoSolicitud.create({
         data: {
@@ -172,6 +175,8 @@ export class CancelacionService {
             diasDeAntelacion,
             porcentajeReembolso: porcentaje,
             valorReembolso,
+            reparto,
+            reembolsoIds,
           },
         },
       });
@@ -186,7 +191,7 @@ export class CancelacionService {
       titulo: `Solicitud ${solicitud.consecutivo ?? 'sin consecutivo'} cancelada`,
       cuerpo: institucional
         ? `La institución canceló tu reserva. Motivo: ${motivo}. El reembolso es del ${porcentaje} %.`
-        : `Cancelaste tu reserva. Reembolso del ${porcentaje} % (${formatearPesos(valorReembolso)}).`,
+        : `Cancelaste tu reserva. Reembolso del ${porcentaje} % (${formatearPesos(cancelada.valorReembolso)}).`,
     });
     return cancelada;
   }
@@ -214,7 +219,7 @@ export class CancelacionService {
         reservas: { select: { id: true, inicio: true }, orderBy: { inicio: 'asc' } },
         cotizaciones: {
           orderBy: { creadaEn: 'desc' },
-          take: 1,
+          include: { ordenesPago: { where: { estado: 'APROBADA' }, select: { id: true, valor: true, tipo: true } } },
         },
       },
     });
@@ -236,7 +241,7 @@ export class CancelacionService {
     const cotizacion = solicitud.cotizaciones[0];
     const cobrada = cotizacion !== undefined && !cotizacion.esExenta && cotizacion.total > 0;
     const porcentaje = !cobrada ? 0 : institucional ? 100 : porcentajeReembolso(politica, diasDeAntelacion);
-    const valorReembolso = cobrada ? Math.round((cotizacion.total * porcentaje) / 100) : 0;
+    const { valorReembolso } = repartirReembolso(solicitud.cotizaciones.flatMap((c) => c.ordenesPago), porcentaje);
 
     return {
       diasDeAntelacion,

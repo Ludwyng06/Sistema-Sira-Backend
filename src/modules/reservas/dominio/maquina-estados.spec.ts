@@ -42,6 +42,10 @@ describe('Máquina de estados de la solicitud', () => {
   it('una solicitud confirmada no puede vencer', () => {
     expect(() => validarTransicion('CONFIRMADA', 'VENCER')).toThrow(TransicionInvalida);
   });
+  it('una confirmada solo admite vencimiento por el evento específico de saldo', () => {
+    expect(validarTransicion('CONFIRMADA', 'VENCER_SALDO')).toBe('VENCIDA');
+    expect(() => validarTransicion('PAGO_PENDIENTE', 'VENCER_SALDO')).toThrow(TransicionInvalida);
+  });
 
   it('los estados terminales no admiten ningún evento', () => {
     for (const estado of ESTADOS_TERMINALES) {

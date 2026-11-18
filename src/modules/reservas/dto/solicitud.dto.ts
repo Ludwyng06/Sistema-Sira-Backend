@@ -343,7 +343,20 @@ export class ReembolsoSolicitudDto {
   creadoEn!: string;
 }
 
+export class PagoResumenSolicitudDto {
+  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty() referencia!: string;
+  @ApiProperty({ enum: ['TOTAL', 'ANTICIPO', 'SALDO'] }) tipo!: 'TOTAL' | 'ANTICIPO' | 'SALDO';
+  @ApiProperty({ enum: ['PASARELA', 'CONSIGNACION', 'ORDEN_SERVICIO'] }) medio!: string;
+  @ApiProperty() estado!: string;
+  @ApiProperty() valor!: number;
+  @ApiProperty() venceEn!: string;
+  @ApiProperty({ type: String, nullable: true }) pagadoEn!: string | null;
+}
+
 export class SolicitudDetalleDto extends SolicitudDto {
+  @ApiPropertyOptional({ type: [PagoResumenSolicitudDto], description: 'Órdenes de la última cotización; se omite en solicitudes exentas.' })
+  ordenesPago?: PagoResumenSolicitudDto[];
   @ApiProperty({ type: [ActaResumenSolicitudDto] })
   actas!: ActaResumenSolicitudDto[];
 

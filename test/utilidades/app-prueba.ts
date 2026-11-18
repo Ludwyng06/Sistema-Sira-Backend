@@ -7,7 +7,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { AppModule } from '../../src/app.module.js';
 
 export async function crearAppPrueba(): Promise<INestApplication> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   app.setGlobalPrefix('api');
   app.use((req: Request, res: Response, next: NextFunction) => {
