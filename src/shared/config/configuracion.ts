@@ -21,6 +21,8 @@ export interface Configuracion {
   SMTP_PORT: number;
   SMTP_USUARIO: string;
   SMTP_CONTRASENA: string;
+  CORREO_PROVEEDOR: 'smtp' | 'brevo-api';
+  BREVO_API_KEY?: string;
   CORREO_REMITENTE: string;
   ALMACENAMIENTO_DIR: string;
   ALMACENAMIENTO_PROVEEDOR: 'disco' | 's3';
@@ -57,11 +59,18 @@ const OBLIGATORIAS = [
   'DATABASE_URL',
   'JWT_ACCESS_SECRETO',
   'JWT_REFRESH_SECRETO',
-  'SMTP_HOST',
   'CORREO_REMITENTE',
 ] as const;
 
 const MINIMO_SECRETO_PRODUCCION = 32;
+
+export function validarProveedorCorreo(valor: unknown): Configuracion['CORREO_PROVEEDOR'] {
+  const proveedor = valor === undefined ? 'smtp' : String(valor).trim();
+  if (proveedor !== 'smtp' && proveedor !== 'brevo-api') {
+    throw new Error('CORREO_PROVEEDOR debe ser smtp o brevo-api.');
+  }
+  return proveedor;
+}
 
 function numero(valor: unknown, defecto: number, nombre: string): number {
   if (valor === undefined || valor === '') return defecto;
@@ -75,7 +84,9 @@ function numero(valor: unknown, defecto: number, nombre: string): number {
  * variable obligatoria y, en producción, rechaza secretos JWT débiles.
  */
 export function validarConfiguracion(entrada: Record<string, unknown>): Configuracion {
-  const faltantes = OBLIGATORIAS.filter((clave) => {
+  const proveedorCorreo = validarProveedorCorreo(entrada.CORREO_PROVEEDOR);
+  const obligatorias = [...OBLIGATORIAS, proveedorCorreo === 'smtp' ? 'SMTP_HOST' : 'BREVO_API_KEY'];
+  const faltantes = obligatorias.filter((clave) => {
     const valor = entrada[clave];
     return valor === undefined || valor === null || String(valor).trim() === '';
   });
@@ -121,6 +132,8 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
     SMTP_PORT: numero(entrada.SMTP_PORT, 1025, 'SMTP_PORT'),
     SMTP_USUARIO: texto('SMTP_USUARIO'),
     SMTP_CONTRASENA: texto('SMTP_CONTRASENA'),
+    CORREO_PROVEEDOR: proveedorCorreo,
+    BREVO_API_KEY: texto('BREVO_API_KEY').trim(),
     CORREO_REMITENTE: texto('CORREO_REMITENTE'),
     ALMACENAMIENTO_DIR: texto('ALMACENAMIENTO_DIR', './almacenamiento'),
     ALMACENAMIENTO_PROVEEDOR: proveedorAlmacenamiento,

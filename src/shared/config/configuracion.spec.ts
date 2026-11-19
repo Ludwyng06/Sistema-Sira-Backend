@@ -11,6 +11,38 @@ const base = {
 };
 
 describe('Configuración de despliegue', () => {
+  it.each([undefined, 'smtp'])('conserva la configuración SMTP con proveedor %j', (CORREO_PROVEEDOR) => {
+    expect(validarConfiguracion({ ...base, CORREO_PROVEEDOR })).toMatchObject({
+      CORREO_PROVEEDOR: 'smtp', SMTP_HOST: 'localhost', SMTP_PORT: 1025,
+      SMTP_USUARIO: '', SMTP_CONTRASENA: '', BREVO_API_KEY: '',
+    });
+    expect(() => validarConfiguracion({ ...base, CORREO_PROVEEDOR, SMTP_HOST: undefined }))
+      .toThrow('SMTP_HOST');
+  });
+
+  it('conserva el puerto y las credenciales SMTP explícitos', () => {
+    expect(validarConfiguracion({ ...base, SMTP_PORT: '465', SMTP_USUARIO: 'usuario', SMTP_CONTRASENA: 'clave' }))
+      .toMatchObject({ SMTP_PORT: 465, SMTP_USUARIO: 'usuario', SMTP_CONTRASENA: 'clave' });
+    expect(() => validarConfiguracion({ ...base, SMTP_PORT: 'invalido' })).toThrow('SMTP_PORT');
+  });
+
+  it.each(['development', 'production'])('permite Brevo sin ninguna variable SMTP en %s', (NODE_ENV) => {
+    const { SMTP_HOST: _host, ...sinSmtp } = base;
+    expect(validarConfiguracion({
+      ...sinSmtp, NODE_ENV, CORREO_PROVEEDOR: ' brevo-api ', BREVO_API_KEY: ' clave-prueba ',
+    })).toMatchObject({ CORREO_PROVEEDOR: 'brevo-api', BREVO_API_KEY: 'clave-prueba', SMTP_HOST: '' });
+  });
+
+  it.each([undefined, null, '', '   '])('exige BREVO_API_KEY al seleccionar Brevo: %j', (BREVO_API_KEY) => {
+    expect(() => validarConfiguracion({ ...base, CORREO_PROVEEDOR: 'brevo-api', BREVO_API_KEY }))
+      .toThrow('BREVO_API_KEY');
+  });
+
+  it.each(['otro', '', null])('rechaza CORREO_PROVEEDOR inválido %j', (CORREO_PROVEEDOR) => {
+    expect(() => validarConfiguracion({ ...base, CORREO_PROVEEDOR }))
+      .toThrow('CORREO_PROVEEDOR debe ser smtp o brevo-api.');
+  });
+
   it.each(['development', 'production'])('permite arrancar sin Redis en %s', (NODE_ENV) => {
     expect(validarConfiguracion({ ...base, NODE_ENV }).REDIS_URL).toBe('');
   });
