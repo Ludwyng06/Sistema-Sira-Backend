@@ -1,9 +1,8 @@
 # SIRA · Backend
 
-**SIRA** (Sistema de Inventario y Reserva de Activos) es la plataforma web con la que la Institución Universitaria del Putumayo administra sus espacios físicos por **sede → bloque → espacio**, publica su disponibilidad y tramita reservas (sin costo para uso institucional y con cotización y pago para externos). Este repositorio es el **backend** (NestJS 12 + Prisma 7 + PostgreSQL 16). Visión completa: [`docs/architecture/01-project-vision.md`](docs/architecture/01-project-vision.md).
+**SIRA** (Sistema de Inventario y Reserva de Activos) es la plataforma web con la que la Institución Universitaria del Putumayo administra sus espacios físicos por **sede → bloque → espacio**, publica su disponibilidad y tramita reservas (sin costo para uso institucional y con cotización y pago para externos). Este repositorio contiene la API y servicios del **backend** desarrollados con NestJS 12, Prisma 7 y PostgreSQL 16.
 
 - Repositorio del frontend: <https://github.com/Ludwyng06/Sistema-Sira-Frontend>
-- **La copia de `docs/` de este repositorio es la fuente de verdad** de la documentación y de los anexos (esquema Prisma, restricciones SQL, lógica de dominio).
 
 ## Requisitos
 
@@ -12,18 +11,31 @@
 - Docker Desktop.
 - Git.
 
-## Arranque
+## Instalación y arranque
 
 ```bash
 npm install
 cp .env.example .env
 npm run db:up
-npm run db:init      # solo quien crea el repo; los demás usan: npm run db:migrate
+npm run db:migrate
 npm run db:seed
 npm run dev          # o npm run start
 ```
 
 > Este repositorio ya trae la migración inicial en `prisma/migrations/`. Quien lo clona usa `npm run db:migrate`.
+
+## Variables de entorno
+
+Copia el archivo de plantilla `.env.example` a `.env` y configura los valores requeridos:
+- `PORT`: Puerto de escucha del backend (por defecto `3001`).
+- `DATABASE_URL`: Cadena de conexión a PostgreSQL (`postgresql://sira:sira@localhost:5432/sira?schema=public`).
+- `REDIS_URL`: URL del servidor Redis para colas y caché (`redis://localhost:6379`).
+- `JWT_ACCESS_SECRETO` y `JWT_REFRESH_SECRETO`: Claves para tokens JWT de autenticación.
+- `FRONTEND_URL`: URL del frontend permitido en CORS (`http://localhost:3000`).
+- `SMTP_HOST`, `SMTP_PORT`, `CORREO_REMITENTE`: Credenciales y remitente de correo saliente (Mailpit en desarrollo en puerto 1025).
+- `PASARELA_PROVEEDOR`: Modalidad de pago (`ninguna` para recaudo institucional con verificación manual).
+
+## Scripts
 
 | Comando | Qué hace |
 |---|---|
@@ -33,13 +45,13 @@ npm run dev          # o npm run start
 | `npm run db:up` / `db:down` | Levanta / apaga PostgreSQL, Redis y Mailpit con Docker. |
 | `npm run db:init` | Crea la migración inicial y le anexa `prisma/sql/restricciones.sql` (solo la primera vez). |
 | `npm run db:migrate` | Aplica las migraciones existentes (`prisma migrate deploy`). |
-| `npm run db:nueva-migracion -- --name <descripcion>` | Crea una migración nueva sin aplicarla (ver abajo). |
+| `npm run db:nueva-migracion -- --name <descripcion>` | Crea una migración nueva sin aplicarla. |
 | `npm run db:seed` | Datos de ejemplo (idempotente). |
 | `npm run db:reset` | Borra y recrea la base (pide confirmación). |
 
 ### MinIO (opcional)
 
-Las imágenes `minio/minio` y `minio/mc` ya no se publican en Docker Hub, así que los servicios de almacenamiento del `docker-compose.yml` están bajo el perfil `almacenamiento` y **no** se levantan con `npm run db:up`. La Fase 0 no los usa todavía.
+Las imágenes `minio/minio` y `minio/mc` ya no se publican en Docker Hub, así que los servicios de almacenamiento del `docker-compose.yml` están bajo el perfil `almacenamiento` y **no** se levantan con `npm run db:up`.
 
 ## URLs y puertos
 
@@ -70,8 +82,6 @@ Contraseña de todos: `Sira2026*` (todos con correo verificado).
 | `empresa@ejemplo.com` | SOLICITANTE empresa (con NIT) |
 | `persona@ejemplo.com` | SOLICITANTE persona natural |
 
-> En la Fase 0 todavía no existe el login: estas cuentas quedan sembradas para cuando se construya el módulo de identidad.
-
 ## Migraciones
 
 Con la columna generada `periodo` de `franja_ocupada`, Prisma detecta siempre una diferencia (`ALTER TABLE "franja_ocupada" ALTER COLUMN "periodo" DROP DEFAULT;`) que PostgreSQL no puede aplicar. Por eso:
@@ -83,26 +93,9 @@ Con la columna generada `periodo` de `franja_ocupada`, Prisma detecta siempre un
 
 ## Pagos
 
-SIRA opera bajo el modelo oficial de **Pago por enlace con verificación manual** (`PASARELA_PROVEEDOR=ninguna`), adoptado por decisión del director del proyecto de grado para no añadir la complejidad de contratos comerciales, RUT y cuentas de la institución. La orden de pago expone el valor y la referencia (`OP-`); el solicitante puede abrir el enlace de recaudo configurable de la institución (portal institucional / PSE), cargar su comprobante de pago en PDF o imagen (`POST /api/pagos/ordenes/:id/soporte`) y alertar a Tesorería mediante WhatsApp con un mensaje prellenado oficial. Tesorería verifica el pago en su panel (`POST /api/pagos/ordenes/:id/verificacion`).
-
-Para consultar el flujo paso a paso con diagrama de secuencia, la configuración de parámetros `PAGO_*`, el endpoint de instrucciones, el manejo de anticipo/saldo (`TOTAL`/`ANTICIPO`/`SALDO`), la activación de pasarelas en línea o el simulador de pruebas locales, ver [`docs/pago-por-enlace.md`](docs/pago-por-enlace.md).
-
-## Mapa de la documentación
-
-| Archivo | Para qué |
-|---|---|
-| [`PROMPT-MAESTRO.md`](PROMPT-MAESTRO.md) | Contexto completo: alcance, stack, reglas innegociables y convenciones. |
-| [`docs/pago-por-enlace.md`](docs/pago-por-enlace.md) | **Pagos por enlace**: flujo manual, parámetros `PAGO_*`, anticipo/saldo y pasarelas. |
-| [`docs/architecture/01-project-vision.md`](docs/architecture/01-project-vision.md) | Qué es, qué problema resuelve, usuarios, alcance. |
-| [`docs/architecture/02-data-model.md`](docs/architecture/02-data-model.md) | Entidades, diagrama ER, tabla única de ocupación, máquina de estados. |
-| [`docs/architecture/03-backend.md`](docs/architecture/03-backend.md) | Módulos, autenticación, reglas de negocio, casos de uso, endpoints, errores. |
-| [`docs/architecture/04-frontend.md`](docs/architecture/04-frontend.md) | Navegación por bloques, identidad visual, pantallas. |
-| [`docs/architecture/05-stack-and-operations.md`](docs/architecture/05-stack-and-operations.md) | Versiones, entornos, puertos, pruebas. |
-| [`docs/architecture/06-roadmap.md`](docs/architecture/06-roadmap.md) | Etapas del proyecto. |
-| [`docs/architecture/07-cambios-documento-base.md`](docs/architecture/07-cambios-documento-base.md) | Correcciones al documento base y preguntas para Vicerrectoría. |
-| [`docs/architecture/08-plan-de-trabajo-20-dias.md`](docs/architecture/08-plan-de-trabajo-20-dias.md) | **Plan de trabajo**: reparto día a día y guion de la demo. |
-| [`docs/architecture/09-inicializacion-y-git.md`](docs/architecture/09-inicializacion-y-git.md) | Receta de inicialización (Fase 0). |
-| [`docs/architecture/anexos/`](docs/architecture/anexos/) | Esquema Prisma, restricciones SQL y lógica de dominio probados. |
+SIRA opera bajo el modelo oficial de pago por enlace con verificación manual, con las pasarelas apagadas (`PASARELA_PROVEEDOR=ninguna`).
+La orden de pago expone el valor y la referencia (`OP-`), permitiendo al solicitante realizar el pago mediante el enlace institucional, adjuntar su comprobante en PDF o imagen y notificar a Tesorería vía WhatsApp o correo.
+Los parámetros institucionales `PAGO_ENLACE_URL`, `PAGO_INSTRUCCIONES`, `PAGO_WHATSAPP_AREA` y `PAGO_CORREO_AREA` son editables por el administrador para configurar el portal de recaudo y los canales oficiales de atención.
 
 ## Estructura
 
@@ -110,7 +103,7 @@ Para consultar el flujo paso a paso con diagrama de secuencia, la configuración
 src/
 ├─ main.ts · app.module.ts · salud.controller.ts
 ├─ shared/        config, prisma, errores, auth, consecutivos, tiempo
-└─ modules/       inventario (ejemplo completo) y un README por cada módulo pendiente
+├─ modules/       inventario, reservas, disponibilidad, pagos, identidad, etc.
 prisma/           schema.prisma, migrations/, sql/restricciones.sql, seed.ts
 scripts/          crear-migracion-inicial.mjs
 ```

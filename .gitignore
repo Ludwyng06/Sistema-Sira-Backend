@@ -13,3 +13,8 @@ src/generated/
 *.tsbuildinfo
 /almacenamiento/
 .env.prod
+
+# Documentacion de apoyo local (no se publica)
+/docs/
+/PROMPT-MAESTRO.md
+

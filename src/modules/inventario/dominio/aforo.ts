@@ -1,5 +1,5 @@
 /**
- * RN-18 extendida (aporte del equipo, ver docs/architecture/07 · E2).
+ * RN-18 extendida (aporte del equipo, E2).
  *
  * Funciones PURAS: no tocan la base de datos, así se prueban fácil y se pueden
  * reutilizar en disponibilidad, reservas y en el frontend.
