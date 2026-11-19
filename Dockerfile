@@ -9,9 +9,9 @@ FROM base AS compilacion
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
 COPY prisma.config.ts ./
+COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 # prisma generate (postinstall) exige DATABASE_URL aunque no se conecte.
 RUN DATABASE_URL=postgresql://x:x@localhost:5432/x npm ci --include=dev
-COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src
 RUN npm run build
 
