@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { lstat, mkdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { AlmacenamientoPort } from './almacenamiento.port.js';
+import { validarClaveAlmacenamiento } from './validar-clave.js';
 
 @Injectable()
 export class DiscoLocalAdapter implements AlmacenamientoPort {
@@ -13,12 +14,7 @@ export class DiscoLocalAdapter implements AlmacenamientoPort {
   }
 
   private async ruta(clave: string, crear: boolean): Promise<string> {
-    // Rechaza también sintaxis Windows aunque se ejecute en Linux.
-    if (!clave || isAbsolute(clave) || clave.includes('\u0000') || /[\\:]/.test(clave) ||
-        clave.split('/').some((parte) => !parte || parte === '.' || parte === '..' || /[. ]$/.test(parte) ||
-          /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(parte))) {
-      throw new Error('Clave de almacenamiento inválida.');
-    }
+    validarClaveAlmacenamiento(clave);
     const destino = resolve(this.raiz, clave);
     const dentro = relative(this.raiz, destino);
     if (!dentro || dentro === '..' || dentro.startsWith(`..${sep}`) || isAbsolute(dentro)) {

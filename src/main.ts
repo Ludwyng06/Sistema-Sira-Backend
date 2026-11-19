@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { ConsoleLogger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import type { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
@@ -11,11 +12,14 @@ import { registroPeticiones } from './shared/logs/registro-peticiones.js';
 
 async function bootstrap() {
   // RNF-15: en producción los logs de la aplicación también salen en JSON.
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true,
     logger: new ConsoleLogger({ json: process.env.NODE_ENV === 'production' }),
   });
   const config = app.get(ConfigService);
+
+  // Cloud Run termina TLS en el proxy: Express debe reconocer la IP y HTTPS originales.
+  app.set('trust proxy', 1);
 
   app.setGlobalPrefix('api');
 
@@ -67,7 +71,7 @@ async function bootstrap() {
     SwaggerModule.createDocument(app, documento),
   );
 
-  await app.listen(config.get<number>('PORT') ?? 3001);
+  await app.listen(config.getOrThrow<number>('PORT'), '0.0.0.0');
 }
 
 await bootstrap();

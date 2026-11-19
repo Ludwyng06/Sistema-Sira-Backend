@@ -1,3 +1,5 @@
+import { validarProveedorAlmacenamiento, validarVariablesS3 } from '../almacenamiento/configuracion-almacenamiento.js';
+
 export interface Configuracion {
   NODE_ENV: string;
   PORT: number;
@@ -8,7 +10,7 @@ export interface Configuracion {
   JWT_ACCESS_EXPIRA: string;
   JWT_REFRESH_SECRETO: string;
   JWT_REFRESH_DIAS: number;
-  REDIS_URL: string;
+  REDIS_URL: string; // Opcional en el entorno; vacío cuando Redis no está configurado.
   S3_ENDPOINT: string;
   S3_REGION: string;
   S3_BUCKET: string;
@@ -21,6 +23,7 @@ export interface Configuracion {
   SMTP_CONTRASENA: string;
   CORREO_REMITENTE: string;
   ALMACENAMIENTO_DIR: string;
+  ALMACENAMIENTO_PROVEEDOR: 'disco' | 's3';
   PASARELA_PROVEEDOR: 'wompi' | 'epayco' | 'bold' | 'ecollect' | 'simulador' | 'ninguna';
   SIMULADOR_SECRETO: string;
   SIMULADOR_URL_API: string;
@@ -48,13 +51,12 @@ export interface Configuracion {
   PASARELA_GRACIA_MINUTOS: number;
 }
 
-// Las variables S3 son opcionales: hoy los archivos van al disco (ALMACENAMIENTO_DIR) y S3 queda para la etapa 2.
+// Las variables S3 solo son obligatorias al seleccionar ALMACENAMIENTO_PROVEEDOR=s3.
 const OBLIGATORIAS = [
   'FRONTEND_URL',
   'DATABASE_URL',
   'JWT_ACCESS_SECRETO',
   'JWT_REFRESH_SECRETO',
-  'REDIS_URL',
   'SMTP_HOST',
   'CORREO_REMITENTE',
 ] as const;
@@ -83,6 +85,8 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
 
   const texto = (clave: string, defecto = ''): string =>
     entrada[clave] === undefined ? defecto : String(entrada[clave]);
+  const proveedorAlmacenamiento = validarProveedorAlmacenamiento(entrada.ALMACENAMIENTO_PROVEEDOR);
+  if (proveedorAlmacenamiento === 's3') validarVariablesS3(entrada);
   const proveedor = texto('PASARELA_PROVEEDOR', 'ninguna').trim();
   if (proveedor !== 'ninguna' && proveedor !== 'wompi' && proveedor !== 'epayco' && proveedor !== 'bold' && proveedor !== 'ecollect' && proveedor !== 'simulador') {
     throw new Error('PASARELA_PROVEEDOR debe ser ninguna, wompi, epayco, bold, ecollect o simulador.');
@@ -119,6 +123,7 @@ export function validarConfiguracion(entrada: Record<string, unknown>): Configur
     SMTP_CONTRASENA: texto('SMTP_CONTRASENA'),
     CORREO_REMITENTE: texto('CORREO_REMITENTE'),
     ALMACENAMIENTO_DIR: texto('ALMACENAMIENTO_DIR', './almacenamiento'),
+    ALMACENAMIENTO_PROVEEDOR: proveedorAlmacenamiento,
     PASARELA_PROVEEDOR: proveedor,
     SIMULADOR_SECRETO: texto('SIMULADOR_SECRETO'),
     SIMULADOR_URL_API: texto('SIMULADOR_URL_API', `http://127.0.0.1:${numero(entrada.PORT, 3001, 'PORT')}/api`),
