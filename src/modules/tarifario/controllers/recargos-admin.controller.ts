@@ -17,7 +17,9 @@ export class RecargosAdminController {
   @Get()
   @ApiOperation({
     summary: 'Lista los recargos configurados.',
-    description: 'Nocturno, dominical y festivo, con su porcentaje y si están activos.',
+    description:
+      'Nocturno, dominical diurno y nocturno, festivo diurno y nocturno, con su porcentaje (0 a 300) y si ' +
+      'están activos.',
   })
   @ApiOkResponse({ type: [RecargoDto] })
   @ApiErrores(401, 403)
@@ -30,8 +32,11 @@ export class RecargosAdminController {
   @ApiOperation({
     summary: 'Actualiza el porcentaje, la hora de inicio o el estado de un recargo.',
     description:
-      'Los tipos son fijos. La hora de inicio (HH:MM) solo aplica al recargo NOCTURNO. Si el recargo aún ' +
-      'no está configurado, el porcentaje es obligatorio y se crea.\n\n' +
+      'Los tipos son fijos. El porcentaje va de 0 a 300 con hasta 2 decimales. La hora de inicio (HH:MM) ' +
+      'solo se configura en el recargo NOCTURNO y también rige DOMINICAL_NOCTURNO y FESTIVO_NOCTURNO. ' +
+      'A cada porción de una franja (diurna o nocturna) se le aplica un solo recargo según el día y la ' +
+      'hora; el festivo prevalece sobre el domingo y, si el recargo que corresponde está inactivo, esa ' +
+      'porción no lleva recargo. Si el recargo aún no está configurado, el porcentaje es obligatorio y se crea.\n\n' +
       'Errores: 400 si el tipo no es válido; 422 SIN_CAMBIOS o RECARGO_INVALIDO.',
   })
   @ApiParam({ name: 'tipo', enum: TipoRecargo })

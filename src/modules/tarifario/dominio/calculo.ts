@@ -6,9 +6,14 @@
  *  - Las jornadas cubren MAÑANA 06:00–12:00, TARDE 12:00–18:00 y NOCHE 18:00–24:00.
  *  - Una franja que cruza medianoche se cobra día por día (hora de Bogotá).
  *  - La hora se cobra completa (se redondea hacia arriba por día).
- *  - El recargo nocturno aplica a las horas desde `desdeHora` y a las anteriores a las 06:00,
- *    de forma proporcional; dominical y festivo aplican a todo el día y no se acumulan
- *    entre sí (el festivo prevalece). El nocturno se suma al de día.
+ *  - Hay cinco recargos: NOCTURNO, DOMINICAL_DIURNO, DOMINICAL_NOCTURNO, FESTIVO_DIURNO y
+ *    FESTIVO_NOCTURNO. Las horas nocturnas son las desde `desdeHora` del NOCTURNO (18:00 si no
+ *    está configurado) y las anteriores a las 06:00; esa misma hora rige para las nocturnas
+ *    dominical y festiva. El festivo prevalece sobre el domingo.
+ *  - Cada porción de la franja (diurna o nocturna) lleva UN solo recargo, el de su día y hora,
+ *    proporcional a sus horas; los recargos no se suman entre sí. Lunes a sábado no festivo,
+ *    la porción diurna no lleva recargo. Si el recargo que corresponde está inactivo (no viene
+ *    en `recargos`), esa porción no lleva ninguno: no se cae a otro.
  *  - Los recargos y el IVA se calculan sobre el valor base y se redondean a pesos enteros.
  */
 import type { TipoRecargo, UnidadCobroTarifa } from '../../../generated/prisma/enums.js';
@@ -35,7 +40,7 @@ export interface TarifaVigente {
 
 export interface RecargoConfigurado {
   porcentaje: number;
-  /** Solo NOCTURNO: hora desde la que aplica ("18:00"). */
+  /** Solo NOCTURNO: hora desde la que aplica ("18:00"); también rige las nocturnas dominical y festiva. */
   desdeHora?: string | null;
 }
 
@@ -131,6 +136,13 @@ function mejorOpcion(
   return opciones.reduce((mejor, actual) => (actual.base < mejor.base ? actual : mejor));
 }
 
+/** Recargo de la porción diurna y de la nocturna según el día (el festivo prevalece sobre el domingo). */
+function tiposDelDia(esFestivo: boolean, esDomingo: boolean): [TipoRecargo | null, TipoRecargo] {
+  if (esFestivo) return ['FESTIVO_DIURNO', 'FESTIVO_NOCTURNO'];
+  if (esDomingo) return ['DOMINICAL_DIURNO', 'DOMINICAL_NOCTURNO'];
+  return [null, 'NOCTURNO'];
+}
+
 export interface EntradaCalculo {
   inicio: Date;
   fin: Date;
@@ -138,6 +150,11 @@ export interface EntradaCalculo {
   /** Fechas AAAA-MM-DD de días festivos. */
   festivos: ReadonlySet<string>;
   recargos: RecargosConfigurados;
+  /**
+   * Hora "desde" del NOCTURNO aunque esté inactivo, para que las nocturnas dominical y festiva
+   * sigan usando esa hora. Si no viene, se toma `recargos.NOCTURNO.desdeHora` (o 18:00).
+   */
+  horaNocturna?: string | null;
 }
 
 export function calcularTarifaEspacio(entrada: EntradaCalculo): ResultadoTarifa {
@@ -146,8 +163,7 @@ export function calcularTarifaEspacio(entrada: EntradaCalculo): ResultadoTarifa 
   const porUnidad = new Map<UnidadCobroTarifa, TarifaVigente>(entrada.tarifas.map((t) => [t.unidad, t]));
   const inicioLocal = aLocal(entrada.inicio);
   const finLocal = aLocal(entrada.fin);
-  const nocturno = entrada.recargos.NOCTURNO;
-  const desdeNoche = horaDecimal(nocturno?.desdeHora);
+  const desdeNoche = horaDecimal(entrada.horaNocturna ?? entrada.recargos.NOCTURNO?.desdeHora);
 
   const lineas: LineaTarifa[] = [];
   let iva = 0;
@@ -163,29 +179,26 @@ export function calcularTarifaEspacio(entrada: EntradaCalculo): ResultadoTarifa 
     const recargos: RecargoAplicado[] = [];
     const esFestivo = entrada.festivos.has(fecha);
     const esDomingo = new Date(dia).getUTCDay() === 0;
-    const recargoDia = esFestivo ? entrada.recargos.FESTIVO : esDomingo ? entrada.recargos.DOMINICAL : undefined;
-    if (recargoDia) {
-      const tipo: TipoRecargo = esFestivo ? 'FESTIVO' : 'DOMINICAL';
+    const duracion = hasta - desde;
+    // Si la hora configurada cae antes de las 06:00 los dos tramos se juntan: no se cuenta dos veces.
+    const horasNocturnas =
+      desdeNoche <= HORA_FIN_MADRUGADA
+        ? duracion
+        : solapamiento(desde, hasta, 0, HORA_FIN_MADRUGADA) + solapamiento(desde, hasta, desdeNoche, 24);
+    const horasDiurnas = Math.max(0, duracion - horasNocturnas);
+    const [tipoDiurno, tipoNocturno] = tiposDelDia(esFestivo, esDomingo);
+    for (const [tipo, horas] of [
+      [tipoDiurno, horasDiurnas],
+      [tipoNocturno, horasNocturnas],
+    ] as const) {
+      if (!tipo || horas <= 1e-9) continue;
+      const config = entrada.recargos[tipo];
+      if (!config) continue;
       recargos.push({
         tipo,
-        porcentaje: recargoDia.porcentaje,
-        valor: Math.round((opcion.base * recargoDia.porcentaje) / 100),
+        porcentaje: config.porcentaje,
+        valor: Math.round((opcion.base * (horas / duracion) * config.porcentaje) / 100),
       });
-    }
-    if (nocturno) {
-      // Si la hora configurada cae antes de las 06:00 los dos tramos se juntan: no se cuenta dos veces.
-      const horasNocturnas =
-        desdeNoche <= HORA_FIN_MADRUGADA
-          ? hasta - desde
-          : solapamiento(desde, hasta, 0, HORA_FIN_MADRUGADA) + solapamiento(desde, hasta, desdeNoche, 24);
-      if (horasNocturnas > 0) {
-        const fraccion = horasNocturnas / (hasta - desde);
-        recargos.push({
-          tipo: 'NOCTURNO',
-          porcentaje: nocturno.porcentaje,
-          valor: Math.round((opcion.base * fraccion * nocturno.porcentaje) / 100),
-        });
-      }
     }
 
     const totalRecargos = recargos.reduce((suma, r) => suma + r.valor, 0);

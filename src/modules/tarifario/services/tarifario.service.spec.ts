@@ -26,8 +26,8 @@ function crearEntorno(opciones: { espacio?: unknown; tarifas?: unknown[]; smmlv?
     festivo: { findMany: vi.fn().mockResolvedValue([]) },
     recargo: {
       findMany: vi.fn().mockResolvedValue([
-        { tipo: 'NOCTURNO', porcentaje: decimal(20), desdeHora: '18:00' },
-        { tipo: 'DOMINICAL', porcentaje: decimal(25), desdeHora: null },
+        { tipo: 'NOCTURNO', porcentaje: decimal(20), desdeHora: '18:00', activo: true },
+        { tipo: 'DOMINICAL_DIURNO', porcentaje: decimal(25), desdeHora: null, activo: true },
       ]),
     },
   };
@@ -85,11 +85,27 @@ describe('TarifarioService.calcular', () => {
   it('suma recargos configurados y aplica los festivos de la base', async () => {
     const { servicio, prisma } = crearEntorno();
     prisma.festivo.findMany.mockResolvedValue([{ fecha: new Date('2026-11-03T00:00:00.000Z') }]);
-    prisma.recargo.findMany.mockResolvedValue([{ tipo: 'FESTIVO', porcentaje: decimal(25), desdeHora: null }]);
+    prisma.recargo.findMany.mockResolvedValue([
+      { tipo: 'FESTIVO_DIURNO', porcentaje: decimal(25), desdeHora: null, activo: true },
+    ]);
     const r = await servicio.calcular(solicitud(), EMISION);
 
-    expect(r.lineas[0]?.recargos).toEqual([{ tipo: 'FESTIVO', porcentaje: 25, valor: 20_000 }]);
+    expect(r.lineas[0]?.recargos).toEqual([{ tipo: 'FESTIVO_DIURNO', porcentaje: 25, valor: 20_000 }]);
     expect(r.total).toBe(100_000);
+  });
+
+  it('ignora los recargos inactivos pero usa la hora del NOCTURNO inactivo para el festivo nocturno', async () => {
+    const { servicio, prisma } = crearEntorno();
+    prisma.festivo.findMany.mockResolvedValue([{ fecha: new Date('2026-11-03T00:00:00.000Z') }]);
+    prisma.recargo.findMany.mockResolvedValue([
+      { tipo: 'NOCTURNO', porcentaje: decimal(20), desdeHora: '10:00', activo: false },
+      { tipo: 'FESTIVO_DIURNO', porcentaje: decimal(25), desdeHora: null, activo: false },
+      { tipo: 'FESTIVO_NOCTURNO', porcentaje: decimal(50), desdeHora: null, activo: true },
+    ]);
+    // 08:00–12:00 de Bogotá: 2 h diurnas (festivo diurno inactivo) y 2 h nocturnas desde las 10:00.
+    const r = await servicio.calcular(solicitud(), EMISION);
+
+    expect(r.lineas[0]?.recargos.map((x) => x.tipo)).toEqual(['FESTIVO_NOCTURNO']);
   });
 
   it('sin tarifas vigentes responde 422 TARIFA_NO_DEFINIDA', async () => {

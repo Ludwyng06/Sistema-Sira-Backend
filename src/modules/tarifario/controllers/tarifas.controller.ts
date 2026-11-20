@@ -18,7 +18,8 @@ export class TarifasController {
     summary: 'Simula el valor de reservar un espacio. No persiste nada.',
     description:
       'Usa la tarifa vigente hoy para el tipo de solicitante, elige la unidad de cobro más barata para el ' +
-      'solicitante y suma los recargos nocturno, dominical o festivo y el IVA cuando aplica. ' +
+      'solicitante y aplica el recargo nocturno, dominical (diurno/nocturno) o ' +
+      'festivo (diurno/nocturno) que corresponda y el IVA cuando aplica. ' +
       'Valores en pesos enteros, desglosados por día (hora de Bogotá).\n\n' +
       'Errores: 400 RANGO_INVALIDO; 404 NO_ENCONTRADO; 422 TARIFA_NO_DEFINIDA o SMMLV_NO_DEFINIDO.',
   })

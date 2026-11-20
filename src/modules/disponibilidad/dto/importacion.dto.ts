@@ -23,7 +23,7 @@ export class ConflictoImportacionDto {
   @ApiProperty({ example: 3 })
   fila!: number;
 
-  @ApiProperty({ example: 'A-101' })
+  @ApiProperty({ example: 'A-105' })
   espacio!: string;
 
   @ApiProperty({ example: '2026-11-03T13:00:00.000Z' })

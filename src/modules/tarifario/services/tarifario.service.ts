@@ -153,11 +153,14 @@ export class TarifarioService {
         },
         select: { fecha: true },
       }),
-      this.prisma.recargo.findMany({ where: { activo: true } }),
+      this.prisma.recargo.findMany(),
     ]);
 
+    // Solo los activos se aplican; un recargo inactivo deja su porción sin recargo (no cae a otro).
     const configurados: RecargosConfigurados = {};
+    const horaNocturna = recargos.find((r) => r.tipo === 'NOCTURNO')?.desdeHora ?? null;
     for (const recargo of recargos) {
+      if (!recargo.activo) continue;
       configurados[recargo.tipo as TipoRecargo] = {
         porcentaje: Number(recargo.porcentaje.toString()),
         desdeHora: recargo.desdeHora,
@@ -171,6 +174,7 @@ export class TarifarioService {
         tarifas,
         festivos: new Set(festivos.map((f) => f.fecha.toISOString().slice(0, 10))),
         recargos: configurados,
+        horaNocturna,
       });
       return { espacioId: espacio.id, tipoSolicitante: solicitud.tipoSolicitante, ...resultado };
     } catch (error) {

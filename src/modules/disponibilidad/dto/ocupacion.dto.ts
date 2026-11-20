@@ -22,10 +22,10 @@ export class ConsultaOcupacionDto {
 }
 
 export class OcupacionEspacioSedeDto {
-  @ApiProperty({ example: 'A-101' })
+  @ApiProperty({ example: 'A-105' })
   codigo!: string;
 
-  @ApiProperty({ example: 'Aula A-101' })
+  @ApiProperty({ example: 'Aula A-105' })
   nombre!: string;
 
   @ApiProperty({ example: 98, description: 'Horas de operación del espacio dentro del rango.' })

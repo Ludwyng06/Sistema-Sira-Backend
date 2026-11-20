@@ -234,6 +234,9 @@ const TIPOS = [
   { codigo: 'ESCENARIO_DEPORTIVO', nombre: 'Escenario deportivo', dias: 2, poliza: 150, base: 120000 },
   { codigo: 'SALA_JUNTAS', nombre: 'Sala de juntas', dias: 2, poliza: null, base: 40000 },
   { codigo: 'ZONA_VERDE', nombre: 'Zona verde', dias: 3, poliza: null, base: 20000 },
+  // Valores de prueba: copiados de ESCENARIO_DEPORTIVO y ZONA_VERDE; no son datos institucionales.
+  { codigo: 'COLISEO', nombre: 'Coliseo', dias: 2, poliza: 150, base: 120000 },
+  { codigo: 'CAFETERIA', nombre: 'Cafetería', dias: 3, poliza: null, base: 20000 },
 ] as const;
 
 const BLOQUES = [
@@ -241,7 +244,7 @@ const BLOQUES = [
     codigo: 'A',
     nombre: 'Bloque A',
     pisos: 1,
-    descripcion: 'Zona A · Aulas 105–125, Salas de informática 118–123 y Oficinas 101–104 (1 piso)',
+    descripcion: 'Zona A · Aulas 105–125 y Salas de informática 118–123 (1 piso)',
   },
   {
     codigo: 'B',
@@ -271,7 +274,7 @@ const BLOQUES = [
     codigo: 'F',
     nombre: 'Biblioteca, Administración y CIECYT',
     pisos: 1,
-    descripcion: 'Biblioteca, Rectoría, Vicerrectorías, Tesorería, Presupuesto, Control Interno, Talento Humano, Jurídica, Archivo, CIECYT, Laboratorio y Meteorología',
+    descripcion: 'Laboratorio Central (único espacio reservable del bloque; biblioteca, administración y CIECYT no se alquilan)',
   },
 ] as const;
 
@@ -290,10 +293,6 @@ const ESPACIOS: EspacioEjemplo[] = [
   // ===========================================================================
   // BLOQUE A (Zona A — 1 piso según plano TOPOGRAFIA UNIPUTUMAYO.dwg)
   // ===========================================================================
-  { codigo: 'A-101', nombre: 'OF. 101', tipo: 'SALA_JUNTAS', piso: 1, capacidad: 10, elementos: [['Tablero', 1], ['Escritorio', 2]] },
-  { codigo: 'A-102', nombre: 'OF. 102', tipo: 'SALA_JUNTAS', piso: 1, capacidad: 10, elementos: [['Tablero', 1], ['Escritorio', 2]] },
-  { codigo: 'A-103', nombre: 'OF. 103', tipo: 'SALA_JUNTAS', piso: 1, capacidad: 10, elementos: [['Tablero', 1], ['Escritorio', 2]] },
-  { codigo: 'A-104', nombre: 'OF. 104', tipo: 'SALA_JUNTAS', piso: 1, capacidad: 10, elementos: [['Tablero', 1], ['Escritorio', 2]] },
   { codigo: 'A-105', nombre: 'Aula 105', tipo: 'AULA', piso: 1, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
   { codigo: 'A-106', nombre: 'Aula 106', tipo: 'AULA', piso: 1, capacidad: 40, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 40]] },
   { codigo: 'A-107', nombre: 'Aula 107', tipo: 'AULA', piso: 1, capacidad: 35, elementos: [['Videobeam', 1], ['Tablero', 1], ['Sillas universitarias', 35]] },
@@ -359,10 +358,7 @@ const ESPACIOS: EspacioEjemplo[] = [
   { codigo: 'D-103', nombre: 'Laboratorio mecánica de fluidos e hidráulica', tipo: 'LABORATORIO', piso: 1, areaM2: 38, capacidad: 10, elementos: [['Banco hidráulico', 1], ['Tablero', 1]] },
   { codigo: 'D-104', nombre: 'Laboratorio Ingeniería Civil', tipo: 'LABORATORIO', piso: 1, areaM2: 173, capacidad: 30, elementos: [['Máquina de los Ángeles', 1], ['Prensa CBR y granulometría', 1], ['Tablero', 1]] },
   { codigo: 'D-105', nombre: 'Laboratorio Ingeniería Forestal', tipo: 'LABORATORIO', piso: 1, areaM2: 126, capacidad: 30, elementos: [['Mesas de pesaje y lavado', 6], ['Tablero', 1]] },
-  { codigo: 'D-106', nombre: 'Herbario', tipo: 'LABORATORIO', piso: 1, capacidad: 20, elementos: [['Gabinetes botánicos', 10], ['Mesas de estudio', 4]] },
-  { codigo: 'D-107', nombre: 'Hemeroteca', tipo: 'SALA_JUNTAS', piso: 1, capacidad: 25, elementos: [['Estanterías de consulta', 8], ['Mesas de lectura', 6]] },
-  { codigo: 'D-108', nombre: 'Xiloteca', tipo: 'LABORATORIO', piso: 1, capacidad: 20, elementos: [['Colección de maderas', 1], ['Mesas de observación', 4]] },
-  { codigo: 'D-109', nombre: 'Cafetería · Mesas internas y Patio de mesas', tipo: 'ZONA_VERDE', piso: 1, areaM2: 324, capacidad: 112, elementos: [['Mesas internas (52 pers.)', 13], ['Mesas externas (60 pers.)', 15]] },
+  { codigo: 'D-109', nombre: 'Cafetería · Mesas internas y Patio de mesas', tipo: 'CAFETERIA', piso: 1, areaM2: 324, capacidad: 112, elementos: [['Mesas internas (52 pers.)', 13], ['Mesas externas (60 pers.)', 15]] },
   { codigo: 'D-201', nombre: 'Laboratorios Ingeniería de Sistemas', tipo: 'LABORATORIO', piso: 2, capacidad: 30, elementos: [['Switches y servidores', 6], ['Computadores', 30], ['Tablero', 1]] },
   { codigo: 'D-202', nombre: 'Aula Informática 1 (Nivel +4.70)', tipo: 'SALA_INFORMATICA', piso: 2, areaM2: 61, capacidad: 24, elementos: [['Computadores', 24], ['Videobeam', 1], ['Tablero', 1]] },
   { codigo: 'D-203', nombre: 'Aula Informática 2 (Nivel +4.70)', tipo: 'SALA_INFORMATICA', piso: 2, areaM2: 61, capacidad: 24, elementos: [['Computadores', 24], ['Videobeam', 1], ['Tablero', 1]] },
@@ -372,15 +368,12 @@ const ESPACIOS: EspacioEjemplo[] = [
   // BLOQUE E (Escenarios Deportivos del Campus)
   // ===========================================================================
   { codigo: 'E-101', nombre: 'Cancha Sintética', tipo: 'ESCENARIO_DEPORTIVO', piso: 1, capacidad: 200, elementos: [['Arcos de fútbol', 2], ['Malla perimetral e iluminación', 1]] },
-  { codigo: 'E-102', nombre: 'Coliseo', tipo: 'ESCENARIO_DEPORTIVO', piso: 1, capacidad: 500, elementos: [['Cancha múltiple cubierta', 1], ['Graderías', 1], ['Sonido ambiental', 1]] },
+  { codigo: 'E-102', nombre: 'Coliseo', tipo: 'COLISEO', piso: 1, capacidad: 500, elementos: [['Cancha múltiple cubierta', 1], ['Graderías', 1], ['Sonido ambiental', 1]] },
 
   // ===========================================================================
-  // BLOQUE F (Biblioteca, Administración, CIECYT y Laboratorio Central)
+  // BLOQUE F (solo el Laboratorio Central es reservable; biblioteca, administración y CIECYT quedan fuera)
   // ===========================================================================
-  { codigo: 'F-101', nombre: 'Biblioteca', tipo: 'SALA_JUNTAS', piso: 1, capacidad: 60, elementos: [['Mesas de lectura', 15], ['Videobeam', 1], ['Estanterías', 20]] },
-  { codigo: 'F-102', nombre: 'CIECYT · Área de Trabajo', tipo: 'SALA_JUNTAS', piso: 1, capacidad: 25, elementos: [['Videobeam', 1], ['Tablero', 1], ['Mesas de investigación', 6]] },
   { codigo: 'F-103', nombre: 'Laboratorio Central', tipo: 'LABORATORIO', piso: 1, capacidad: 25, elementos: [['Mesas de laboratorio', 6], ['Tablero', 1]] },
-  { codigo: 'F-104', nombre: 'Estación de Meteorología y Huerta', tipo: 'ZONA_VERDE', piso: 1, capacidad: 30, elementos: [['Caseta meteorológica', 1], ['Área de huerta', 1]] },
 ];
 
 /** Tarifa por hora de prueba según el tipo de solicitante. */
@@ -537,8 +530,10 @@ async function inventario(ids: Map<string, string>, deps: Map<string, string>) {
 async function tarifario() {
   const recargos = [
     { tipo: 'NOCTURNO', porcentaje: 20, desdeHora: '18:00' },
-    { tipo: 'DOMINICAL', porcentaje: 25, desdeHora: null },
-    { tipo: 'FESTIVO', porcentaje: 25, desdeHora: null },
+    { tipo: 'DOMINICAL_DIURNO', porcentaje: 25, desdeHora: null },
+    { tipo: 'DOMINICAL_NOCTURNO', porcentaje: 25, desdeHora: null },
+    { tipo: 'FESTIVO_DIURNO', porcentaje: 25, desdeHora: null },
+    { tipo: 'FESTIVO_NOCTURNO', porcentaje: 25, desdeHora: null },
   ] as const;
   for (const r of recargos) {
     await prisma.recargo.upsert({
@@ -593,16 +588,17 @@ const ID_BLOQUEO_MANTENIMIENTO = '00000000-0000-4000-8000-000000000002';
 const idFranja = (n: number) => `00000000-0000-4000-8000-0000000001${String(n).padStart(2, '0')}`;
 
 // -----------------------------------------------------------------------------
-// Horario de operación (RN-19). Lunes a viernes 06:00-22:00, sábado 06:00-18:00; domingo cerrado.
+// Horario de operación (RN-19). Todos los días de 06:00 a 22:00.
 // 0 = domingo ... 6 = sábado. Valores de prueba hasta que Vicerrectoría confirme los reales.
 // -----------------------------------------------------------------------------
 const HORARIO_OPERACION: [number, string, string][] = [
+  [0, '06:00', '22:00'],
   [1, '06:00', '22:00'],
   [2, '06:00', '22:00'],
   [3, '06:00', '22:00'],
   [4, '06:00', '22:00'],
   [5, '06:00', '22:00'],
-  [6, '06:00', '18:00'],
+  [6, '06:00', '22:00'],
 ];
 
 async function horarios(espacios: Map<string, string>) {
@@ -619,8 +615,8 @@ async function horarios(espacios: Map<string, string>) {
 
 async function bloqueos(ids: Map<string, string>, espacios: Map<string, string>) {
   const creadoPorId = ids.get('admin@itp.edu.co')!;
-  const aulaA101 = espacios.get('A-101')!;
-  const labB102 = espacios.get('B-102')!;
+  const aulaA105 = espacios.get('A-105')!;
+  const aulaB102 = espacios.get('B-102')!;
 
   // Lunes de 7:00 a 9:00 (Bogotá = UTC-5) durante 8 semanas desde el 19 de octubre de 2026.
   const MS_SEMANA = 7 * 24 * 60 * 60 * 1000;
@@ -635,7 +631,7 @@ async function bloqueos(ids: Map<string, string>, espacios: Map<string, string>)
     update: {},
     create: {
       id: ID_BLOQUEO_CLASE,
-      espacioId: aulaA101,
+      espacioId: aulaA105,
       motivo: 'CLASE',
       descripcion: `Clase recurrente de ejemplo ${EJEMPLO}`,
       inicio: clases[0].inicio,
@@ -652,7 +648,7 @@ async function bloqueos(ids: Map<string, string>, espacios: Map<string, string>)
       update: { inicio: clase.inicio, fin: clase.fin },
       create: {
         id: idFranja(i + 1),
-        espacioId: aulaA101,
+        espacioId: aulaA105,
         inicio: clase.inicio,
         fin: clase.fin,
         estado: 'BLOQUEO',
@@ -671,7 +667,7 @@ async function bloqueos(ids: Map<string, string>, espacios: Map<string, string>)
     update: {},
     create: {
       id: ID_BLOQUEO_MANTENIMIENTO,
-      espacioId: labB102,
+      espacioId: aulaB102,
       motivo: 'MANTENIMIENTO',
       descripcion: `Mantenimiento de equipos de red ${EJEMPLO}`,
       inicio: inicioMantenimiento,
@@ -685,7 +681,7 @@ async function bloqueos(ids: Map<string, string>, espacios: Map<string, string>)
     update: { inicio: inicioMantenimiento, fin: finMantenimiento },
     create: {
       id: idFranja(20),
-      espacioId: labB102,
+      espacioId: aulaB102,
       inicio: inicioMantenimiento,
       fin: finMantenimiento,
       estado: 'BLOQUEO',
@@ -724,7 +720,7 @@ async function servicios() {
 
   // Restricciones de ejemplo (RF-SVC-04) hasta que la institución defina las reales.
   // Lista vacía = el servicio aplica a todos los tipos de espacio.
-  const ESCENICOS = ['AUDITORIO', 'ESCENARIO_DEPORTIVO', 'ZONA_VERDE'];
+  const ESCENICOS = ['AUDITORIO', 'ESCENARIO_DEPORTIVO', 'COLISEO', 'ZONA_VERDE'];
   const SIN_LABORATORIOS = TIPOS.map((t) => t.codigo).filter(
     (c) => c !== 'LABORATORIO' && c !== 'SALA_INFORMATICA',
   );

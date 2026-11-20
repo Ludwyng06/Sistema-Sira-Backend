@@ -301,7 +301,7 @@ export class EstimadoSolicitudDto {
   })
   base!: number;
 
-  @ApiProperty({ example: 36000, description: 'Suma de recargos (nocturno, dominical, festivo).' })
+  @ApiProperty({ example: 36000, description: 'Suma de recargos (nocturno, dominical diurno/nocturno, festivo diurno/nocturno).' })
   recargos!: number;
 
   @ApiProperty({ example: 116000, description: 'base + recargos.' })

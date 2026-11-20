@@ -96,10 +96,14 @@ enum TipoProveedor {
   EXTERNO
 }
 
+/// NOCTURNO aplica de lunes a sábado no festivo desde su `desdeHora` (y antes de las 06:00).
+/// Las nocturnas dominical y festiva usan esa misma hora. El festivo prevalece sobre el domingo.
 enum TipoRecargo {
   NOCTURNO
-  DOMINICAL
-  FESTIVO
+  DOMINICAL_DIURNO
+  DOMINICAL_NOCTURNO
+  FESTIVO_DIURNO
+  FESTIVO_NOCTURNO
 }
 
 enum EstadoSolicitud {
@@ -621,7 +625,7 @@ model Recargo {
   id         String      @id @default(uuid()) @db.Uuid
   tipo       TipoRecargo @unique
   porcentaje Decimal     @db.Decimal(5, 2)
-  /// Para NOCTURNO: hora desde la que aplica ("18:00").
+  /// Para NOCTURNO: hora desde la que aplica ("18:00"); también rige las nocturnas dominical y festiva.
   desdeHora  String?     @map("desde_hora")
   activo     Boolean     @default(true)
 

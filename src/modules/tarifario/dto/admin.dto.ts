@@ -217,15 +217,22 @@ export class PaginaTarifasDto {
 // ---------------------------------------------------------------- Recargos
 
 export class ActualizarRecargoDto {
-  @ApiPropertyOptional({ example: 20, minimum: 0, maximum: 100 })
+  @ApiPropertyOptional({
+    example: 20,
+    minimum: 0,
+    maximum: 300,
+    description: 'Porcentaje sobre la base, de 0 a 300 con hasta 2 decimales.',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'porcentaje debe tener máximo 2 decimales.' })
   @Min(0, { message: 'porcentaje no puede ser negativo.' })
-  @Max(100, { message: 'porcentaje no puede superar 100.' })
+  @Max(300, { message: 'porcentaje no puede superar 300.' })
   porcentaje?: number;
 
-  @ApiPropertyOptional({ example: '18:00', description: 'Solo para NOCTURNO: hora desde la que aplica (HH:MM).' })
+  @ApiPropertyOptional({ example: '18:00', description:
+      'Solo para NOCTURNO: hora desde la que aplica (HH:MM). Las nocturnas dominical y festiva usan esta misma hora.',
+  })
   @IsOptional()
   @Matches(FORMATO_HORA, { message: 'desdeHora debe tener el formato HH:MM.' })
   desdeHora?: string;

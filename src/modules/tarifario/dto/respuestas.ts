@@ -1,8 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { TipoRecargo } from '../../../generated/prisma/enums.js';
 
 export class RecargoAplicadoDto {
-  @ApiProperty({ enum: ['NOCTURNO', 'DOMINICAL', 'FESTIVO'], example: 'NOCTURNO' })
-  tipo!: 'NOCTURNO' | 'DOMINICAL' | 'FESTIVO';
+  @ApiProperty({
+    enum: TipoRecargo,
+    example: TipoRecargo.NOCTURNO,
+    description: 'Un solo recargo por porción de la franja (diurna o nocturna), según el día y la hora.',
+  })
+  tipo!: TipoRecargo;
 
   @ApiProperty({ example: 20, description: 'Porcentaje configurado del recargo.' })
   porcentaje!: number;

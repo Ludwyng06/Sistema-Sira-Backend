@@ -31,13 +31,17 @@ export class RecargosAdminService {
     return filas.map(aDto);
   }
 
-  /** Los tipos son fijos (NOCTURNO, DOMINICAL, FESTIVO): se edita su configuración, no se crean otros. */
+  /**
+   * Los tipos son fijos (NOCTURNO, DOMINICAL_DIURNO, DOMINICAL_NOCTURNO, FESTIVO_DIURNO, FESTIVO_NOCTURNO):
+   * se edita su configuración, no se crean otros. Solo NOCTURNO guarda hora; las nocturnas dominical y
+   * festiva usan esa misma hora.
+   */
   async actualizar(tipo: TipoRecargo, datos: ActualizarRecargoDto): Promise<RecargoDto> {
     if (datos.porcentaje === undefined && datos.desdeHora === undefined && datos.activo === undefined) {
       throw new ErrorDominio('SIN_CAMBIOS', 'Indica porcentaje, desdeHora o activo para actualizar.', 422);
     }
     if (datos.desdeHora !== undefined && tipo !== TipoRecargo.NOCTURNO) {
-      throw new ErrorDominio('RECARGO_INVALIDO', 'La hora de inicio solo aplica al recargo nocturno.', 422);
+      throw new ErrorDominio('RECARGO_INVALIDO', 'La hora de inicio solo se configura en el recargo NOCTURNO; las nocturnas dominical y festiva usan esa misma hora.', 422);
     }
 
     const existente = await this.prisma.recargo.findUnique({ where: { tipo } });

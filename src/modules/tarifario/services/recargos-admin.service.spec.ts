@@ -16,7 +16,7 @@ const fila = (cambios: Record<string, unknown> = {}) => ({
 function crearEntorno(existente: unknown = fila()) {
   const prisma = {
     recargo: {
-      findMany: vi.fn().mockResolvedValue([fila(), fila({ id: 'r-2', tipo: 'DOMINICAL', desdeHora: null })]),
+      findMany: vi.fn().mockResolvedValue([fila(), fila({ id: 'r-2', tipo: 'DOMINICAL_NOCTURNO', desdeHora: null })]),
       findUnique: vi.fn().mockResolvedValue(existente),
       update: vi.fn((args: { data: Record<string, unknown> }) =>
         Promise.resolve(fila({ ...args.data, porcentaje: decimal(Number(args.data.porcentaje ?? 20)) })),
@@ -37,7 +37,7 @@ describe('RecargosAdminService', () => {
     const r = await e.servicio.listar();
     expect(e.prisma.recargo.findMany).toHaveBeenCalledWith({ orderBy: { tipo: 'asc' } });
     expect(r[0]).toEqual({ id: 'r-1', tipo: 'NOCTURNO', porcentaje: 20, desdeHora: '18:00', activo: true });
-    expect(r[1]).toMatchObject({ tipo: 'DOMINICAL', desdeHora: null });
+    expect(r[1]).toMatchObject({ tipo: 'DOMINICAL_NOCTURNO', desdeHora: null });
   });
 
   it('actualiza solo los campos enviados', async () => {
@@ -51,17 +51,17 @@ describe('RecargosAdminService', () => {
   });
 
   it('puede desactivar un recargo', async () => {
-    const e = crearEntorno(fila({ tipo: 'FESTIVO', desdeHora: null }));
-    await e.servicio.actualizar('FESTIVO', { activo: false });
+    const e = crearEntorno(fila({ tipo: 'FESTIVO_DIURNO', desdeHora: null }));
+    await e.servicio.actualizar('FESTIVO_DIURNO', { activo: false });
     expect(e.prisma.recargo.update).toHaveBeenCalledWith({
-      where: { tipo: 'FESTIVO' },
+      where: { tipo: 'FESTIVO_DIURNO' },
       data: { activo: false },
     });
   });
 
-  it('la hora de inicio solo aplica al nocturno: 422 RECARGO_INVALIDO', async () => {
+  it('la hora de inicio solo se configura en el nocturno (ni en DOMINICAL_NOCTURNO): 422 RECARGO_INVALIDO', async () => {
     const e = crearEntorno();
-    const error = await rechazo(e.servicio.actualizar('DOMINICAL', { desdeHora: '18:00' }));
+    const error = await rechazo(e.servicio.actualizar('DOMINICAL_NOCTURNO', { desdeHora: '18:00' }));
     expect(error).toMatchObject({ codigo: 'RECARGO_INVALIDO', status: 422 });
     expect(e.prisma.recargo.update).not.toHaveBeenCalled();
   });
@@ -74,7 +74,7 @@ describe('RecargosAdminService', () => {
 
   it('si no está configurado exige el porcentaje y lo crea', async () => {
     const e = crearEntorno(null);
-    const sinPorcentaje = await rechazo(e.servicio.actualizar('FESTIVO', { activo: true }));
+    const sinPorcentaje = await rechazo(e.servicio.actualizar('FESTIVO_DIURNO', { activo: true }));
     expect(sinPorcentaje).toMatchObject({ codigo: 'RECARGO_INVALIDO', status: 422 });
 
     await e.servicio.actualizar('NOCTURNO', { porcentaje: 20 });
@@ -82,9 +82,22 @@ describe('RecargosAdminService', () => {
       data: { tipo: 'NOCTURNO', porcentaje: 20, desdeHora: '18:00', activo: true },
     });
 
-    await e.servicio.actualizar('DOMINICAL', { porcentaje: 25, activo: false });
+    await e.servicio.actualizar('DOMINICAL_NOCTURNO', { porcentaje: 25, activo: false });
     expect(e.prisma.recargo.create).toHaveBeenLastCalledWith({
-      data: { tipo: 'DOMINICAL', porcentaje: 25, desdeHora: null, activo: false },
+      data: { tipo: 'DOMINICAL_NOCTURNO', porcentaje: 25, desdeHora: null, activo: false },
     });
+  });
+
+  it('acepta porcentajes de hasta 300 con decimales', async () => {
+    const e = crearEntorno(fila({ tipo: 'FESTIVO_NOCTURNO', desdeHora: null }));
+    const r = await e.servicio.actualizar('FESTIVO_NOCTURNO', { porcentaje: 300 });
+    expect(e.prisma.recargo.update).toHaveBeenCalledWith({
+      where: { tipo: 'FESTIVO_NOCTURNO' },
+      data: { porcentaje: 300 },
+    });
+    expect(r.porcentaje).toBe(300);
+
+    const r2 = await e.servicio.actualizar('FESTIVO_NOCTURNO', { porcentaje: 125.75 });
+    expect(r2.porcentaje).toBe(125.75);
   });
 });

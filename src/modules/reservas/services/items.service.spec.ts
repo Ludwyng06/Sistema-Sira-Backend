@@ -139,6 +139,38 @@ describe('ItemsService reservas', () => {
     expect(e.prisma.reservaItem.create).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['2026-11-07', 'INTERNO'],
+    ['2026-11-07', 'PERSONA_NATURAL'],
+    ['2026-11-07', 'EMPRESA'],
+    ['2026-11-07', 'ENTIDAD'],
+    ['2026-11-08', 'INTERNO'],
+    ['2026-11-08', 'PERSONA_NATURAL'],
+    ['2026-11-08', 'EMPRESA'],
+    ['2026-11-08', 'ENTIDAD'],
+  ])('agrega una reserva el %s para solicitante %s con horario de fin de semana', async (fecha, tipoTarifa) => {
+    const e = crearEntorno();
+    e.solicitudes.borradorPropio.mockResolvedValue({ id: SOLICITUD_ID, tipoTarifa });
+    e.prisma.espacio.findFirst.mockResolvedValue({
+      id: ESPACIO_ID,
+      tipoEspacioId: TIPO_AULA,
+      horarios: [0, 1, 2, 3, 4, 5, 6].map((diaSemana) => ({ diaSemana, abre: '06:00', cierra: '22:00' })),
+      tipo: { anticipacionMinimaDias: 2, anticipacionEnHabiles: true },
+    });
+    const inicio = `${fecha}T06:00:00-05:00`;
+    const fin = `${fecha}T22:00:00-05:00`;
+    await expect(e.servicio.agregarReserva(SOLICITUD_ID, reserva({ inicio, fin }), usuario)).resolves.toMatchObject({
+      id: 'r-1',
+      inicio: new Date(inicio).toISOString(),
+      fin: new Date(fin).toISOString(),
+    });
+    expect(e.tarifario.calcular).toHaveBeenCalledWith(
+      { espacioId: ESPACIO_ID, tipoSolicitante: tipoTarifa, inicio: new Date(inicio), fin: new Date(fin) },
+      expect.any(Date),
+    );
+    expect(e.prisma.reservaItem.create).toHaveBeenCalled();
+  });
+
   it('rechaza con 422 FUERA_DE_HORARIO un domingo cuando el espacio solo opera de lunes a viernes', async () => {
     const e = crearEntorno();
     e.prisma.espacio.findFirst.mockResolvedValue({

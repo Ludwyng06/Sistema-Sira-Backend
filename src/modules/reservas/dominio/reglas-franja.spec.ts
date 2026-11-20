@@ -30,6 +30,15 @@ describe('validarHorario', () => {
     expect(validarHorario(bogota('2026-11-03', '07:00'), bogota('2026-11-03', '18:00'), LUNES_A_VIERNES)).toBeNull();
   });
 
+  it.each(['2026-11-07', '2026-11-08'])('acepta de apertura a cierre el fin de semana (%s)', (fecha) => {
+    const horarios = [0, 1, 2, 3, 4, 5, 6].map((diaSemana) => ({ diaSemana, abre: '06:00', cierra: '22:00' }));
+    // El cierre ocurre al día siguiente en UTC, pero sigue siendo el mismo día en Bogotá.
+    expect(validarHorario(bogota(fecha, '06:00'), bogota(fecha, '22:00'), horarios)).toBeNull();
+    expect(validarHorario(bogota(fecha, '21:00'), bogota(fecha, '22:01'), horarios)).toMatchObject({
+      codigo: 'FUERA_DE_HORARIO',
+    });
+  });
+
   it('rechaza un domingo sin fila de horario: el espacio no opera', () => {
     expect(validarHorario(bogota('2026-11-01', '09:00'), bogota('2026-11-01', '11:00'), LUNES_A_VIERNES)).toEqual({
       codigo: 'FUERA_DE_HORARIO',
@@ -63,6 +72,15 @@ describe('anticipación', () => {
   const AHORA = bogota('2026-10-22', '10:00');
   const habiles2 = { anticipacionMinimaDias: 2, anticipacionEnHabiles: true };
   const corridos2 = { anticipacionMinimaDias: 2, anticipacionEnHabiles: false };
+
+  it.each(['2026-10-24', '2026-10-25'])('admite reservar en fin de semana con suficientes hábiles (%s)', (fecha) => {
+    const miercoles = bogota('2026-10-21', '10:00');
+    expect(diasDeAnticipacion(miercoles, bogota(fecha, '08:00'), true)).toBe(2);
+    expect(validarAnticipacion(miercoles, bogota(fecha, '08:00'), habiles2)).toBeNull();
+    expect(validarAnticipacion(AHORA, bogota(fecha, '08:00'), habiles2)).toMatchObject({
+      codigo: 'ANTICIPACION_INSUFICIENTE',
+    });
+  });
 
   it('en hábiles salta el fin de semana: jueves + 2 hábiles es el lunes', () => {
     expect(diasDeAnticipacion(AHORA, bogota('2026-10-26', '08:00'), true)).toBe(2);
